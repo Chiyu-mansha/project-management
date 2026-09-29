@@ -1,0 +1,12 @@
+# 前端
+node_modules/
+dist/
+
+# 后端
+venv/
+__pycache__/
+*.pyc
+*.db
+
+# 密钥
+.env
