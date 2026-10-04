@@ -67,7 +67,7 @@
       <p style="color:#888;margin-top:0">推文发布后粘贴到这里，AI 自动提取 3-5 个常见问答，以 <b>待审核(draft)</b> 存入，管理员修改后发布。</p>
       <el-form :model="genForm" label-width="70px">
         <el-form-item label="推文标题"><el-input v-model="genForm.title" placeholder="如：编程马拉松报名启动" /></el-form-item>
-        <el-form-item label="活动"><el-select v-model="genForm.activity_id" placeholder="选择活动" clearable filterable style="width:100%"><el-option v-for="a in activities" :key="a.id" :label="a.title" :value="a.id" /></el-select></el-form-item>
+        <el-form-item label="活动"><el-select v-model="genForm.activity_id" placeholder="输入名称检索，不存在直接回车新建" clearable filterable allow-create default-first-option style="width:100%"><el-option v-for="a in activities" :key="a.id" :label="a.title" :value="a.id" /></el-select></el-form-item>
         <el-form-item label="分类"><el-select v-model="genForm.category" style="width:100%"><el-option v-for="c in CATS" :key="c" :label="c" :value="c" /></el-select></el-form-item>
         <el-form-item label="推文内容"><el-input v-model="genForm.content" type="textarea" :rows="6" placeholder="粘贴推文正文…" /></el-form-item>
       </el-form>
@@ -149,6 +149,14 @@ const autoGen = async () => {
   if (!genForm.content.trim()) return ElMessage.warning('先粘贴推文内容')
   genLoading.value = true
   try {
+    // 直接输入了新活动名称（字符串）→ 先建活动再拿 id
+    if (typeof genForm.activity_id === 'string' && genForm.activity_id.trim() !== '') {
+      const r = await fetch(`${API}/api/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: genForm.activity_id.trim() }) })
+      const created = await r.json()
+      genForm.activity_id = created.id
+      if (!activities.value.some(a => a.id === created.id)) activities.value.unshift(created)
+    }
+    if (genForm.activity_id === '') genForm.activity_id = null
     const d = await (await fetch(`${API}/api/faqs/auto-generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(genForm) })).json()
     ElMessage.success(`AI提取${d.total}条，已存为待审核`)
     genDlg.value = false; query.status = 'draft'; load()
