@@ -1,0 +1,14 @@
+[
+  {"question": "编程马拉松报名截止什么时候？", "answer": "10月20日18:00截止，逾期不补报。", "activity_id": null, "category": "竞赛类", "source": "manual", "status": "published"},
+  {"question": "编程马拉松可以跨年级组队吗？", "answer": "可以，3-5人一组，至少1名本校学生。", "activity_id": null, "category": "竞赛类", "source": "manual", "status": "published"},
+  {"question": "AI前沿讲座在哪里举办？", "answer": "大学生活动中心301，14:00开始。", "activity_id": null, "category": "讲座/分享类", "source": "manual", "status": "published"},
+  {"question": "AI前沿讲座需要带电脑吗？", "answer": "不需要，纯分享，可带笔记本记录。", "activity_id": null, "category": "讲座/分享类", "source": "manual", "status": "published"},
+  {"question": "Python工作坊要什么基础？", "answer": "零基础可听，有电脑即可，现场配环境。", "activity_id": null, "category": "培训/工作坊类", "source": "manual", "status": "published"},
+  {"question": "Python工作坊发证书吗？", "answer": "全勤发结业证明，计入实践学分。", "activity_id": null, "category": "培训/工作坊类", "source": "manual", "status": "published"},
+  {"question": "志愿者招募面试什么时候？", "answer": "本周六上午9点，学生会办公室。", "activity_id": null, "category": "招募类", "source": "manual", "status": "published"},
+  {"question": "志愿者有综测加分吗？", "answer": "有，合格加0.5分，优秀加1分。", "activity_id": null, "category": "招募类", "source": "manual", "status": "published"},
+  {"question": "校园歌手大赛怎么报名？", "answer": "在活动详情页点报名，上传30秒清唱音频。", "activity_id": null, "category": "文体活动类", "source": "manual", "status": "published"},
+  {"question": "校园歌手大赛可以乐队参加吗？", "answer": "可以，乐队不超过6人，需自带乐器。", "activity_id": null, "category": "文体活动类", "source": "manual", "status": "published"},
+  {"question": "国庆放假通知哪里看？", "answer": "学校官网+本系统站内通知同步推送。", "activity_id": null, "category": "通知类", "source": "manual", "status": "published"},
+  {"question": "调课通知会短信提醒吗？", "answer": "会，报名成功后截止前24h自动推送。", "activity_id": null, "category": "通知类", "source": "manual", "status": "published"}
+]

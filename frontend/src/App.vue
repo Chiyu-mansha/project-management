@@ -1,23 +1,15 @@
 <template>
-  <div style="padding: 40px">
-    <h2>校园活动智能通知&报名助理</h2>
-    <p>后端状态:{{ msg }}</p>
-    <el-button type="primary" @click="check">检测后端连接</el-button>
+  <div class="page">
+    <nav v-if="$route.path !== '/'" class="topbar">
+      <el-button link @click="$router.push('/')">↩ 返回</el-button>
+      <span v-if="$route.path === '/faqs'" class="title">📚 FAQ 知识库</span>
+    </nav>
+    <main :class="{panel: $route.path !== '/'}"><router-view /></main>
   </div>
 </template>
-
-<script setup>
-import { ref } from 'vue'
-
-const msg = ref('未检测')
-
-const check = async () => {
-  try {
-    const r = await fetch('http://localhost:8000/api/hello')
-    const d = await r.json()
-    msg.value = '已连通:' + d.message
-  } catch (e) {
-    msg.value = '连接失败,请确认后端已启动(uvicorn main:app)'
-  }
-}
-</script>
+<style scoped>
+.page{min-height:100vh;background:linear-gradient(180deg,#f0f5ff 0%,#f7f9fc 320px,#f7f9fc 100%);padding:20px}
+.topbar{max-width:1400px;margin:0 auto 14px;display:flex;align-items:center;gap:12px}
+.title{font-weight:700;font-size:18px}
+.panel{max-width:1400px;margin:0 auto;background:#fff;border-radius:12px;padding:18px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+</style>
