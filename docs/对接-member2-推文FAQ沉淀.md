@@ -114,6 +114,8 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/faqs/auto-generate
 * 网关没开 / 没配 Key 时，我这边自动降级为模板提问，**接口照样返回，不报错**
 * 你自己的推文生成 `/api/ai/generate-article` 也用同一个网关服务，地址同样默认 `127.0.0.1:8100`
 
+> **@member-2 注意**：你最初写的网关 `main.py` 返回是 `{"code":0,"data":{...}}`，我为了全项目接口格式统一，改成了**直接返回内容**（如 `/api/ai/chat` 返回 `{"answer","source"}`）。这个壳**没有还原** —— 你接前端时请按"直接返回内容"解析；如果你坚持要 `code/data` 壳，提前说，我们统一后再一起改。
+
 如果你在本地跑，需要 member-1 先把网关服务起来（`cd 网关; uvicorn main:app --port 8100`），否则大家走的都是 Mock。详见 `docs/对接-member1-AI网关.md`。
 
 ## 7. 验收清单

@@ -61,6 +61,24 @@ POST /api/ai/similar-question
 响应：{"index": 0}        # 最相似候选的下标；都不相似返回 -1
 ```
 
+### 兼容说明（已保留 member-2 早期写法）
+
+* `generate_text(prompt, system=None)` 和 `chat(question, system=None)` **保留了可选的 `system` 参数**，不传也能用
+* `AI_MOCK=true` 仍然生效（等价于 `USE_REAL_LLM=0`，强制 Mock）
+* `_recommend_by_llm` helper 已保留，`recommend` 逻辑复原
+
+### 注意：接口返回壳变了（@member-2 请看）
+
+member-2 最初 `main.py` 的返回是 `{"code":0,"data":{...}}`，我为了让所有接口格式统一（与 `backend` 一致），改成了**直接返回内容**：
+
+| 接口 | member-2 原来 | 现在 |
+|---|---|---|
+| `/api/ai/chat` | `{"code":0,"data":{"answer","source"}}` | `{"answer","source"}` |
+| `/api/ai/generate-article` | `{"code":0,"data":{"content"}}` | `{"content"}` |
+| `/api/ai/recommend` | `{"code":0,"data":{"items"}}` | `{"items"}` |
+
+**这个壳没还原**（还原会和我 backend 的调用对不上）。member-2 如果要接前端，请按"直接返回内容"来解析；若坚持要 `code/data` 壳，请提前说，我们统一后再改两边。
+
 ### 附：其它（供 member-2 用）
 
 ```

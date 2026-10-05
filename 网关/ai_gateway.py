@@ -6,19 +6,23 @@
 - 调用失败自动降级到 Mock，绝不抛出未捕获异常
 
 对外统一入口（各 POD 只调这里，不直连大模型）：
-    gateway_chat(prompt)            -> str   文本生成 / 对话兜底（最常用）
-    generate_text(prompt)           -> str   推文/文案生成（= gateway_chat 的语义化别名）
+    gateway_chat(prompt)              -> str   文本生成 / 对话兜底（最常用）
+    generate_text(prompt, system=None) -> str  推文/文案生成（可传 system 覆盖风格）
 
 三大 AI 接入点对应的能力函数：
     # 1) 智能答疑
-    chat(question)                  -> dict  返回 {"answer", "source"}
+    chat(question, system=None)       -> dict  返回 {"answer", "source"}
     # 2) 推文关键问题提取
-    extract_faq(title, content)     -> list  返回 [{"question", "answer"}]
+    extract_faq(title, content)       -> list  返回 [{"question", "answer"}]
     # 3) 高频问题同义词匹配
-    similar_question(question, cands) -> int 返回候选下标，-1 表示都不相似
+    similar_question(question, cands) -> int   返回候选下标，-1 表示都不相似
 
 扩展：
-    recommend(profile, candidates)  -> list  个性化推荐，返回 [{"activity_id", "reason"}]
+    recommend(profile, candidates)    -> list  个性化推荐，返回 [{"activity_id", "reason"}]
+
+兼容说明：
+- 保留 member-2 早期签名：generate_text / chat 均支持可选 system 参数
+- 保留 AI_MOCK=true 开关（等价于 USE_REAL_LLM=0，强制 Mock）
 """
 import json
 import os
@@ -35,7 +39,11 @@ BASE_URL = os.getenv(
 )
 MODEL = os.getenv("LLM_MODEL", "qwen-plus")
 # 与 backend/llm_gateway.py 一致：默认 Mock，显式开关才走真实网关
-USE_REAL_LLM = os.getenv("USE_REAL_LLM") == "1"
+# 兼容 member-2 早期写法：AI_MOCK=true 等价于 USE_REAL_LLM=0
+if os.getenv("AI_MOCK", "").lower() in ("1", "true", "yes"):
+    USE_REAL_LLM = False
+else:
+    USE_REAL_LLM = os.getenv("USE_REAL_LLM") == "1"
 
 SYSTEM_EDITOR = "你是一名高校活动推文编辑，擅长写校园公众号/社群推文。"
 SYSTEM_QA = "你是一名校园活动智能助手，只回答校园活动、竞赛、电子票、综测加分相关问题，无关问题礼貌拒绝。"
@@ -74,8 +82,15 @@ def gateway_chat(prompt: str) -> str:
     )
 
 
-def generate_text(prompt: str) -> str:
-    """推文/文案生成，语义化别名，等价于 gateway_chat。"""
+def generate_text(prompt: str, system: str = None) -> str:
+    """推文/文案生成，等价于 gateway_chat；可传 system 覆盖默认风格。"""
+    if system:
+        if USE_REAL_LLM:
+            try:
+                return _chat_completion(prompt, system=system)
+            except Exception as e:
+                return f"[真实网关失败，已降级Mock] {e} | 针对「{prompt[:50]}」的通用回答：请咨询活动主办方。"
+        return f"[Mock回答] 针对「{prompt[:80]}」：活动时间地点以活动详情页为准，综测加分见活动说明，报名问题请联系主办方。"
     return gateway_chat(prompt)
 
 
@@ -149,11 +164,12 @@ def similar_question(question: str, candidates: list) -> int:
 
 # ---------- 能力 1：智能答疑（对话） ----------
 
-def chat(question: str) -> dict:
-    """输入问题，返回 {"answer": str, "source": "llm"|"mock"}。"""
+def chat(question: str, system: str = None) -> dict:
+    """输入问题，返回 {"answer": str, "source": "llm"|"mock"}；可传 system 覆盖默认人设。"""
+    sys_prompt = system or SYSTEM_QA
     if USE_REAL_LLM:
         try:
-            return {"answer": _chat_completion(question, system=SYSTEM_QA), "source": "llm"}
+            return {"answer": _chat_completion(question, system=sys_prompt), "source": "llm"}
         except Exception as e:
             return {"answer": f"[真实网关失败，已降级Mock] {e}", "source": "mock"}
     return {
@@ -162,10 +178,24 @@ def chat(question: str) -> dict:
     }
 
 
-# ---------- 个性化推荐 ----------
+# ---------- 扩展：个性化推荐 ----------
 
 def recommend(profile: dict, candidates: list) -> list:
     """输入用户画像和候选活动，返回 [{"activity_id", "reason"}]。MVP 先走规则。"""
+    try:
+        if USE_REAL_LLM:
+            return _recommend_by_llm(profile, candidates)
+        raise RuntimeError("USE_REAL_LLM 未开启，走 Mock")
+    except Exception:
+        return _mock_recommend(profile, candidates)
+
+
+def _recommend_by_llm(profile: dict, candidates: list) -> list:
+    # TODO: 用 LLM 输出 JSON 推荐理由；MVP 先走规则
+    return _mock_recommend(profile, candidates)
+
+
+def _mock_recommend(profile: dict, candidates: list) -> list:
     result = []
     for c in candidates[:3]:
         result.append(
