@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
-from llm_gateway import gateway_chat
+from llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 
@@ -67,8 +67,9 @@ def ask(body: AskIn):
         _log(conn, body.activity_id, q, d["answer"], "faq")
         conn.commit(); conn.close()
         return {"answer": d["answer"], "source": "faq", "faq_id": d["id"]}
-    # 2. 未命中 → 兜底大模型
-    answer = gateway_chat(f"活动ID={body.activity_id}，问题：{q}")
+    # 2. 未命中 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
+    result = chat(q, body.activity_id)
+    answer = result["answer"]
     _log(conn, body.activity_id, q, answer, "llm")
     conn.commit(); conn.close()
     return {"answer": answer, "source": "llm", "faq_id": None}
@@ -98,7 +99,19 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
         g["count"] += 1
         g["answer"] = r["answer"] or g["answer"]
     conn.close()
-    out = [g for (aid, norm), g in groups.items() if norm not in faq_norm and g["count"] >= min_count]
+    # 规则归一化先聚一轮（快）
+    basics = list(groups.values())
+    # 开启真实网关时，再用 AI 做同义词合并（把不同问法归为一类）
+    if USE_REAL_LLM and len(basics) > 1:
+        merged = []
+        for g in basics:
+            idx = gw_similar(g["question"], [m["question"] for m in merged])
+            if idx >= 0:
+                merged[idx]["count"] += g["count"]
+            else:
+                merged.append(g)
+        basics = merged
+    out = [g for g in basics if _norm(g["question"]) not in faq_norm and g["count"] >= min_count]
     out.sort(key=lambda x: -x["count"])
     return {"items": out, "total": len(out), "min_count": min_count}
 
