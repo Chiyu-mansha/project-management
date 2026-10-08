@@ -3,6 +3,7 @@
     <nav v-if="$route.path !== '/'" class="topbar">
       <el-button link @click="$router.push('/')">↩ 返回</el-button>
       <span v-if="$route.path === '/faqs'" class="title">📚 FAQ 知识库</span>
+      <span v-else-if="$route.path.startsWith('/activities')" class="title">📅 活动发布</span>
     </nav>
     <main :class="{panel: $route.path !== '/'}"><router-view /></main>
   </div>

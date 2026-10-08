@@ -14,6 +14,11 @@
         <h3>智能答疑</h3>
         <el-button type="success" round>去提问 →</el-button>
       </el-card>
+      <el-card class="pick" shadow="hover" @click="$router.push('/activities')">
+        <div class="emoji">📅</div>
+        <h3>活动发布</h3>
+        <el-button type="warning" round>进入管理 →</el-button>
+      </el-card>
     </div>
     <div class="status"><span class="dot" :class="{ok}"></span>{{ msg }}</div>
   </div>
@@ -28,7 +33,7 @@ onMounted(async () => { try { const d = await (await fetch('http://localhost:800
 .badge{display:inline-block;background:#e8efff;color:#3a5bff;font-size:12px;padding:4px 12px;border-radius:20px}
 h1{font-size:36px;margin:12px 0 4px}
 .sub{color:#666;margin-bottom:28px}
-.cards{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
 .pick{cursor:pointer;padding:10px}
 .pick:hover{transform:translateY(-3px)}
 .emoji{font-size:48px}
