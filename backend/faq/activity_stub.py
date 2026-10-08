@@ -1,9 +1,16 @@
+"""临时活动占位路由：仅供成员3的 FAQ 页联调使用。
+
+归属说明：
+- 完整活动 CRUD 归成员2所有。
+- 本文件只保留最小读写（列表、创建），成员2的正式活动模块落地后删除。
+- 不要在其它业务中引用本占位路由。
+"""
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
 
-router = APIRouter(prefix="/api/activities", tags=["activities"])
+router = APIRouter(prefix="/api/activities", tags=["activities-stub"])
 
 
 class ActIn(BaseModel):

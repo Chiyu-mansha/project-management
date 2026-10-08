@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import init_db
-import faqs, qa, activities, faqs_auto
+from faq import activity_stub_router, faqs_router, faqs_auto_router, qa_router
 
 app = FastAPI(title="校园活动智能通知&报名助理")
 
@@ -14,10 +14,10 @@ app.add_middleware(
 )
 
 init_db()
-app.include_router(faqs.router)
-app.include_router(faqs_auto.router)
-app.include_router(qa.router)
-app.include_router(activities.router)
+app.include_router(activity_stub_router)
+app.include_router(faqs_router)
+app.include_router(faqs_auto_router)
+app.include_router(qa_router)
 
 
 @app.get("/api/hello")

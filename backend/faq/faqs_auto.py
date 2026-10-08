@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
-from llm_gateway import extract_faq
+from .llm_gateway import extract_faq
 
 router = APIRouter(prefix="/api/faqs", tags=["faqs-auto"])
 

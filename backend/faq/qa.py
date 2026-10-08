@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
-from llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
+from .llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
 
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 
