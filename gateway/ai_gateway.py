@@ -82,8 +82,17 @@ def gateway_chat(prompt: str) -> str:
     )
 
 
-def generate_text(prompt: str, system: str = None) -> str:
-    """推文/文案生成，等价于 gateway_chat；可传 system 覆盖默认风格。"""
+def generate_text(prompt: str = None, system: str = None, activity_id: int = None, style: str = None) -> str:
+    """推文/文案生成，支持通过 activity_id 和 style 透传上下文，失败自动降级 Mock。"""
+    # 如果传入了 activity_id 和 style，在网关层统一拼装提示词
+    if activity_id:
+        prompt = f"为活动 id={activity_id} 写一篇"
+        if style:
+            prompt += f"「{style}」风格的"
+        prompt += "校园推文。"
+    elif not prompt:
+        prompt = "写一篇校园推文。"
+        
     if system:
         if USE_REAL_LLM:
             try:
