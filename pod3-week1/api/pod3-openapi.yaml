@@ -6,10 +6,14 @@ info:
     API contract for check-in verification, electronic activity tickets,
     roster confirmation, electronic sealing, credential warehouse and exports.
 servers:
+  - url: http://127.0.0.1:8088/api
+    description: Local mock server (POD-3 required contract)
   - url: http://127.0.0.1:8088/api/v1
-    description: Local mock server
+    description: Legacy compatibility server
+  - url: https://api.example.edu/api
+    description: Placeholder integration environment (POD-3 required contract)
   - url: https://api.example.edu/api/v1
-    description: Placeholder integration environment
+    description: Legacy compatibility environment
 tags:
   - name: Check-in
   - name: Confirmation
@@ -17,6 +21,187 @@ tags:
   - name: Export
 
 paths:
+  /activities/{activity_id}/checkin:
+    post:
+      tags: [Check-in]
+      summary: Verify a check-in and issue an electronic activity ticket
+      operationId: pod3Checkin
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckInRequest'
+      responses:
+        '201':
+          description: Check-in accepted and credential issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResult'
+        '200':
+          description: Idempotent replay; the original result is returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /activities/{activity_id}/checkin-list:
+    get:
+      tags: [Check-in]
+      summary: List check-ins for an activity
+      operationId: listActivityCheckins
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+      responses:
+        '200':
+          description: Activity check-in list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /activities/{activity_id}/confirm:
+    post:
+      tags: [Confirmation]
+      summary: Confirm a roster of issued credentials
+      operationId: confirmActivityCheckins
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConfirmationBatchRequest'
+      responses:
+        '201':
+          description: Roster confirmed and credentials moved to CONFIRMED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmationBatch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /credentials/{credential_id}/sign:
+    post:
+      tags: [Confirmation]
+      summary: Apply an electronic seal to one confirmed credential
+      operationId: signCredential
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SealBatchRequest'
+      responses:
+        '200':
+          description: Credential sealed and signed PDF metadata returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignCredentialResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /credentials:
+    get:
+      tags: [Credential]
+      summary: List credentials belonging to the current student
+      operationId: listMyCredentials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/CredentialStatus'
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: page_token
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Current student's credential warehouse
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /credentials/export:
+    get:
+      tags: [Export]
+      summary: Export credentials for a student or an organizer's activity roster
+      operationId: exportCredentials
+      description: >-
+        The JWT subject is the student for a personal export. An organizer may
+        provide activity_id and receives that activity's sealed roster.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: activity_id
+          in: query
+          required: false
+          description: Required for an organizer batch roster export.
+          schema:
+            type: string
+            format: uuid
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [XLSX, CSV]
+            default: XLSX
+      responses:
+        '202':
+          description: Export job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
   /activities/{activity_id}/check-ins:
     post:
       tags: [Check-in]
@@ -331,6 +516,12 @@ components:
         maxLength: 128
 
   responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     BadRequest:
       description: Invalid request
       content:
@@ -470,6 +661,18 @@ components:
         credential:
           $ref: '#/components/schemas/Credential'
 
+    CheckInList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckIn'
+        next_page_token:
+          type: string
+          nullable: true
+
     CreateConfirmationBatchRequest:
       type: object
       required: [credential_ids, confirmed_by]
@@ -546,6 +749,15 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Credential'
+        signed_file:
+          $ref: '#/components/schemas/DownloadInfo'
+
+    SignCredentialResult:
+      type: object
+      required: [credential, signed_file]
+      properties:
+        credential:
+          $ref: '#/components/schemas/Credential'
         signed_file:
           $ref: '#/components/schemas/DownloadInfo'
 
@@ -654,4 +866,3 @@ components:
         details:
           type: object
           additionalProperties: true
-

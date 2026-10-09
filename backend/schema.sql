@@ -1,5 +1,6 @@
--- 校园活动智能通知&报名助理 数据库 schema v1
+-- 校园活动智能通知&报名助理 数据库 schema v1 (legacy common-module schema)
 -- SQLite 版本,改动需经技术负责人批准并升级版本号
+-- POD-3 formal service uses backend/pod3_schema.sql.
 
 -- 用户表(POD-2 读,POD-1 只读脱敏画像)
 CREATE TABLE users (

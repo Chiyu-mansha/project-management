@@ -62,7 +62,7 @@ class Pod3MockApiTest(unittest.TestCase):
         student_id = str(uuid.uuid4())
         status, payload = self.request(
             "POST",
-            f"/api/v1/activities/{activity_id}/check-ins",
+            f"/api/activities/{activity_id}/checkin",
             {
                 "student_id": student_id,
                 "channel": "QR",
@@ -91,13 +91,13 @@ class Pod3MockApiTest(unittest.TestCase):
         }
         first_status, first = self.request(
             "POST",
-            f"/api/v1/activities/{activity_id}/check-ins",
+            f"/api/activities/{activity_id}/checkin",
             body,
             {"Idempotency-Key": key},
         )
         replay_status, replay = self.request(
             "POST",
-            f"/api/v1/activities/{activity_id}/check-ins",
+            f"/api/activities/{activity_id}/checkin",
             body,
             {"Idempotency-Key": key},
         )
@@ -109,17 +109,25 @@ class Pod3MockApiTest(unittest.TestCase):
         self.assertEqual(first["credential"]["status"], "ISSUED")
 
         list_status, warehouse = self.request(
-            "GET", f"/api/v1/students/{student_id}/credentials"
+            "GET",
+            "/api/credentials",
+            headers={"X-Demo-User-Id": student_id},
         )
         self.assertEqual(list_status, 200)
         self.assertEqual(len(warehouse["items"]), 1)
+
+        checkin_list_status, checkin_list = self.request(
+            "GET", f"/api/activities/{activity_id}/checkin-list"
+        )
+        self.assertEqual(checkin_list_status, 200)
+        self.assertEqual(len(checkin_list["items"]), 1)
 
     def test_03_confirmation_seal_and_pdf_download(self) -> None:
         activity_id, student_id, credential_id = self.issue_credential()
         organizer_id = str(uuid.uuid4())
         batch_status, batch = self.request(
             "POST",
-            f"/api/v1/activities/{activity_id}/confirmation-batches",
+            f"/api/activities/{activity_id}/confirm",
             {"credential_ids": [credential_id], "confirmed_by": organizer_id},
         )
         self.assertEqual(batch_status, 201)
@@ -127,21 +135,22 @@ class Pod3MockApiTest(unittest.TestCase):
 
         seal_status, sealed = self.request(
             "POST",
-            f"/api/v1/confirmation-batches/{batch['id']}/seal",
+            f"/api/credentials/{credential_id}/sign",
             {"seal_id": str(uuid.uuid4()), "signed_by": organizer_id},
         )
         self.assertEqual(seal_status, 200)
-        self.assertEqual(sealed["batch"]["status"], "SEALED")
-        self.assertEqual(sealed["credentials"][0]["status"], "SEALED")
+        self.assertEqual(sealed["credential"]["status"], "SEALED")
 
         pdf_status, download = self.request(
-            "GET", f"/api/v1/credentials/{credential_id}/pdf"
+            "GET", f"/api/credentials/{credential_id}/pdf"
         )
         self.assertEqual(pdf_status, 200)
         self.assertEqual(len(download["sha256"]), 64)
 
         warehouse_status, warehouse = self.request(
-            "GET", f"/api/v1/students/{student_id}/credentials?status=SEALED"
+            "GET",
+            "/api/credentials?status=SEALED",
+            headers={"X-Demo-User-Id": student_id},
         )
         self.assertEqual(warehouse_status, 200)
         self.assertEqual([credential_id], [item["id"] for item in warehouse["items"]])
@@ -151,47 +160,45 @@ class Pod3MockApiTest(unittest.TestCase):
         organizer_id = str(uuid.uuid4())
         _, batch = self.request(
             "POST",
-            f"/api/v1/activities/{activity_id}/confirmation-batches",
+            f"/api/activities/{activity_id}/confirm",
             {"credential_ids": [credential_id], "confirmed_by": organizer_id},
         )
         self.request(
             "POST",
-            f"/api/v1/confirmation-batches/{batch['id']}/seal",
+            f"/api/credentials/{credential_id}/sign",
             {"seal_id": str(uuid.uuid4()), "signed_by": organizer_id},
         )
 
         student_status, student_job = self.request(
-            "POST",
-            f"/api/v1/students/{student_id}/exports",
-            {},
-            {"Idempotency-Key": f"student-export-{uuid.uuid4()}"},
+            "GET",
+            "/api/credentials/export",
+            headers={
+                "X-Demo-User-Id": student_id,
+                "Idempotency-Key": f"student-export-{uuid.uuid4()}",
+            },
         )
         self.assertEqual(student_status, 202)
         self.assertEqual(student_job["status"], "SUCCEEDED")
         self.assertEqual(student_job["row_count"], 1)
 
         organizer_status, organizer_job = self.request(
-            "POST",
-            f"/api/v1/activities/{activity_id}/bonus-list-exports",
-            {"format": "XLSX"},
-            {
+            "GET",
+            f"/api/credentials/export?activity_id={activity_id}&format=XLSX",
+            headers={
                 "Idempotency-Key": f"organizer-export-{uuid.uuid4()}",
                 "X-Demo-User-Id": organizer_id,
+                "X-Demo-Role": "ORGANIZER",
             },
         )
         self.assertEqual(organizer_status, 202)
         self.assertEqual(organizer_job["row_count"], 1)
 
-        get_status, stored_job = self.request(
-            "GET", f"/api/v1/export-jobs/{organizer_job['id']}"
-        )
-        self.assertEqual(get_status, 200)
-        self.assertEqual(stored_job["id"], organizer_job["id"])
+        self.assertEqual(organizer_job["export_type"], "ORGANIZER_BONUS_LIST")
 
     def test_05_duplicate_checkin_with_new_key_is_rejected(self) -> None:
         activity_id = str(uuid.uuid4())
         student_id = str(uuid.uuid4())
-        path = f"/api/v1/activities/{activity_id}/check-ins"
+        path = f"/api/activities/{activity_id}/checkin"
         body = {"student_id": student_id, "channel": "QR", "title": "校园活动"}
         first_status, _ = self.request(
             "POST", path, body, {"Idempotency-Key": f"first-{uuid.uuid4()}"}

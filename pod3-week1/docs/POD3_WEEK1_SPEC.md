@@ -115,6 +115,17 @@ ISSUED -> CONFIRMED -> SEALED
 ## 6. API 约定
 
 - 规范文件：`api/pod3-openapi.yaml`
+- 正式接口前缀：`/api`。
+- POD-3 固定接口：
+  - `POST /api/activities/{id}/checkin`
+  - `GET /api/activities/{id}/checkin-list`
+  - `POST /api/activities/{id}/confirm`
+  - `POST /api/credentials/{id}/sign`
+  - `GET /api/credentials`
+  - `GET /api/credentials/{id}/pdf`
+  - `GET /api/credentials/export`
+- `GET /api/credentials` 不接收学生 ID，服务端从 JWT 的 `sub` 获取当前学生。
+- `GET /api/credentials/export` 不带 `activity_id` 时导出当前学生凭证；负责人带 `activity_id` 时导出该活动的已签章名单。
 - 日期时间：ISO 8601 UTC，例如 `2026-10-13T08:00:00Z`。
 - 认证：`Authorization: Bearer <JWT>`。
 - 幂等：创建签到和导出任务时传 `Idempotency-Key`。
@@ -227,4 +238,3 @@ ISSUED -> CONFIRMED -> SEALED
 - `confirmation_*`、`seal_record`、`export_job` 表评审。
 
 两人共同完成 OpenAPI 评审、异常码统一和冒烟测试。
-

@@ -109,6 +109,33 @@ class CredentialHandler(BaseHTTPRequestHandler):
             self._send(200, {"status": "ok", "service": "pod3-credential-mock", "version": "1.0.0"})
             return
 
+        match = re.fullmatch(r"/api/activities/([^/]+)/checkin-list", path)
+        if match:
+            self._list_checkins(match.group(1))
+            return
+
+        if path == "/api/credentials":
+            self._list_my_credentials(parse_qs(parsed.query))
+            return
+
+        if path == "/api/credentials/export":
+            self._create_export_from_query(parse_qs(parsed.query))
+            return
+
+        match = re.fullmatch(r"/api/credentials/([^/]+)/pdf", path)
+        if match:
+            self._credential_pdf(match.group(1))
+            return
+
+        match = re.fullmatch(r"/api/credentials/([^/]+)", path)
+        if match:
+            credential = type(self).credentials.get(match.group(1))
+            if credential is None:
+                self._error(404, "RESOURCE_NOT_FOUND", "Credential not found")
+                return
+            self._send(200, credential)
+            return
+
         match = re.fullmatch(r"/api/v1/students/([^/]+)/credentials", path)
         if match:
             self._list_credentials(match.group(1), parse_qs(parsed.query))
@@ -141,6 +168,21 @@ class CredentialHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+
+        match = re.fullmatch(r"/api/activities/([^/]+)/checkin", path)
+        if match:
+            self._create_checkin(match.group(1))
+            return
+
+        match = re.fullmatch(r"/api/activities/([^/]+)/confirm", path)
+        if match:
+            self._create_confirmation_batch(match.group(1))
+            return
+
+        match = re.fullmatch(r"/api/credentials/([^/]+)/sign", path)
+        if match:
+            self._sign_credential(match.group(1))
+            return
 
         match = re.fullmatch(r"/api/v1/activities/([^/]+)/check-ins", path)
         if match:
@@ -302,6 +344,54 @@ class CredentialHandler(BaseHTTPRequestHandler):
         type(self).batches[batch_id] = batch
         self._send(201, batch)
 
+    def _list_checkins(self, activity_id: str) -> None:
+        """Return all check-ins belonging to an activity."""
+        if not self._validate_uuid(activity_id, "activity_id"):
+            return
+        items = [
+            checkin
+            for checkin in type(self).checkins.values()
+            if checkin["activity_id"] == activity_id
+        ]
+        items.sort(key=lambda value: value["checkin_at"], reverse=True)
+        self._send(200, {"items": items, "next_page_token": None})
+
+    def _sign_credential(self, credential_id: str) -> None:
+        """Seal one confirmed credential through the POD-3 endpoint."""
+        credential = type(self).credentials.get(credential_id)
+        if credential is None:
+            self._error(404, "RESOURCE_NOT_FOUND", "Credential not found")
+            return
+        if credential["status"] != "CONFIRMED":
+            self._error(
+                409,
+                "INVALID_STATE_TRANSITION",
+                "Only a CONFIRMED credential can be signed",
+                current_status=credential["status"],
+            )
+            return
+
+        body = self._json_body()
+        if body is None:
+            return
+        if not body.get("seal_id") or not body.get("signed_by"):
+            self._error(400, "VALIDATION_ERROR", "seal_id and signed_by are required")
+            return
+
+        sealed_at = utc_now()
+        digest = hashlib.sha256(
+            f"pod3:credential:{credential_id}:{sealed_at}".encode()
+        ).hexdigest()
+        credential["status"] = "SEALED"
+        credential["sealed_at"] = sealed_at
+        credential["pdf_sha256"] = digest
+        signed_file = {
+            "download_url": f"https://files.example.invalid/pod3/credentials/{credential_id}.pdf",
+            "expires_at": future_time(),
+            "sha256": digest,
+        }
+        self._send(200, {"credential": credential, "signed_file": signed_file})
+
     def _seal_batch(self, batch_id: str) -> None:
         batch = type(self).batches.get(batch_id)
         if batch is None:
@@ -351,6 +441,53 @@ class CredentialHandler(BaseHTTPRequestHandler):
         items.sort(key=lambda value: value["issued_at"], reverse=True)
         self._send(200, {"items": items, "next_page_token": None})
 
+    def _current_user_id(self) -> str | None:
+        """Use a demo header to stand in for the JWT subject in the mock."""
+        user_id = self.headers.get("X-Demo-User-Id", "").strip()
+        if not user_id:
+            self._error(401, "UNAUTHORIZED", "X-Demo-User-Id is required by the mock")
+            return None
+        if not self._validate_uuid(user_id, "current_user_id"):
+            return None
+        return user_id
+
+    def _list_my_credentials(self, query: dict[str, list[str]]) -> None:
+        student_id = self._current_user_id()
+        if student_id is None:
+            return
+        self._list_credentials(student_id, query)
+
+    def _create_export_from_query(self, query: dict[str, list[str]]) -> None:
+        requester_id = self._current_user_id()
+        if requester_id is None:
+            return
+        activity_id = query.get("activity_id", [None])[0]
+        export_format = query.get("format", ["XLSX"])[0].upper()
+        role = self.headers.get("X-Demo-Role", "STUDENT").upper()
+
+        if activity_id:
+            if role != "ORGANIZER":
+                self._error(403, "FORBIDDEN", "Only an organizer can export an activity roster")
+                return
+            if not self._validate_uuid(activity_id, "activity_id"):
+                return
+            self._create_export(
+                "ORGANIZER_BONUS_LIST",
+                activity_id=activity_id,
+                export_format=export_format,
+                idempotency_key=self.headers.get("Idempotency-Key")
+                or f"get-export:{requester_id}:{activity_id}:{export_format}",
+            )
+            return
+
+        self._create_export(
+            "STUDENT_CREDENTIAL_BUNDLE",
+            student_id=requester_id,
+            export_format="ZIP",
+            idempotency_key=self.headers.get("Idempotency-Key")
+            or f"get-export:{requester_id}:student",
+        )
+
     def _credential_pdf(self, credential_id: str) -> None:
         credential = type(self).credentials.get(credential_id)
         if credential is None:
@@ -379,8 +516,10 @@ class CredentialHandler(BaseHTTPRequestHandler):
         *,
         student_id: str | None = None,
         activity_id: str | None = None,
+        export_format: str | None = None,
+        idempotency_key: str | None = None,
     ) -> None:
-        key = self._idempotency_key()
+        key = idempotency_key or self._idempotency_key()
         if key is None:
             return
         body = self._json_body()
@@ -406,7 +545,7 @@ class CredentialHandler(BaseHTTPRequestHandler):
                 for item in type(self).credentials.values()
                 if item["activity_id"] == activity_id and item["status"] == "SEALED"
             )
-            extension = str(body.get("format", "XLSX")).lower()
+            extension = str(export_format or body.get("format", "XLSX")).lower()
 
         job_id = new_id()
         digest = hashlib.sha256(f"pod3-export:{job_id}".encode()).hexdigest()
@@ -448,4 +587,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

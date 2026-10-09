@@ -39,21 +39,24 @@ python3 -m unittest discover -s tests -v
 
 ## 核心接口
 
-- `POST /api/v1/activities/{activity_id}/check-ins`：签到核销并自动发放电子活动票。
-- `POST /api/v1/activities/{activity_id}/confirmation-batches`：负责人提交名单确认批次。
-- `POST /api/v1/confirmation-batches/{batch_id}/seal`：为确认名单签章。
-- `GET /api/v1/students/{student_id}/credentials`：学生凭证仓库。
-- `GET /api/v1/credentials/{credential_id}`：凭证详情。
-- `GET /api/v1/credentials/{credential_id}/pdf`：获取 PDF 下载信息。
-- `POST /api/v1/students/{student_id}/exports`：打包导出综测材料。
-- `POST /api/v1/activities/{activity_id}/bonus-list-exports`：负责人导出加分名单。
-- `GET /api/v1/export-jobs/{job_id}`：查询异步导出任务。
+POD-3 规定的正式接口使用 `/api` 前缀：
+
+- `POST /api/activities/{id}/checkin`：签到核销并自动发放电子活动票。
+- `GET /api/activities/{id}/checkin-list`：负责人查看签到名单。
+- `POST /api/activities/{id}/confirm`：负责人确认签到名单。
+- `POST /api/credentials/{id}/sign`：对单张凭证进行电子签章。
+- `GET /api/credentials`：当前登录学生的凭证仓库，身份从 JWT 获取。
+- `GET /api/credentials/{id}/pdf`：获取已签章凭证 PDF 的临时下载信息。
+- `GET /api/credentials/export`：学生导出个人凭证；负责人携带 `activity_id` 批量导出活动名单。
+
+`/api/v1` 下的旧路径暂时保留用于兼容已开始联调的客户端，新增开发应只使用上面的正式接口。
 
 ## 技术假设
 
 - 接口风格：REST + JSON，统一前缀 `/api/v1`。
 - 数据库：PostgreSQL 15+，ID 使用 UUID，时间统一保存为 UTC。
-- 身份认证：团队统一 JWT；本交付包只定义角色与权限，不实现登录。
+- 身份认证：团队统一 JWT；凭证仓库使用 JWT 的 `sub` 作为当前学生身份，负责人名单和导出使用 JWT 角色与组织权限。
+- Mock 联调时用 `X-Demo-User-Id` 模拟 JWT 的 `sub`，用 `X-Demo-Role: ORGANIZER` 模拟负责人角色；正式服务必须替换为真实 JWT 中间件。
 - 活动、学生和组织由其他模块维护，POD-3 仅保存其 ID，避免跨模块强外键耦合。
 - 真实签章、对象存储和 PDF 生成由后续适配器接入；第一周先冻结契约和数据结构。
 
