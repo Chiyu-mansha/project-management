@@ -3,6 +3,7 @@
 -- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
 -- 约定:表名复数、字段 snake_case、主键统一 id 自增;每张表标注负责 POD
 
+
 -- 一、users 用户表(负责:POD-2)——仅存学生;发布者见 organizers 表
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

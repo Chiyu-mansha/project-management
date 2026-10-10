@@ -10,3 +10,7 @@ __pycache__/
 
 # 密钥
 .env
+
+backend/.venv/
+
+backend/storage/
