@@ -1,6 +1,7 @@
--- 校园活动智能通知&报名助理 数据库 schema v1.2
--- SQLite 版本;与飞书《数据库 Schema v1.2》文档保持一致
+-- 校园活动智能通知&报名助理 数据库 schema v1.3
+-- SQLite 版本;与飞书《数据库 Schema v1.3》文档保持一致
 -- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
+-- v1.3 备注(10-11 变更申请):faqs 改 status 枚举 published/draft、category 按活动类型口径、新增 origin_title;新增 qa_logs 表(POD-1 申请,PM 批准)
 -- v1.2 备注(10-11 拍板):activities.status 增加 cancelled(POD-1 提案,PM 拍板)
 -- v1.1 备注(10-11 复议):activities 报名截止字段回退为 signup_deadline
 -- (POD-1 实现已用该名,原提出方撤回 registration_deadline)
@@ -118,9 +119,10 @@ CREATE TABLE faqs (
     activity_id INTEGER,                    -- 空=全局FAQ,非空=某活动专属
     question TEXT NOT NULL,
     answer TEXT NOT NULL,
-    category TEXT,                          -- 报名/时间/地点/奖项/综测等
+    category TEXT,                          -- 竞赛类/讲座/分享类/培训/工作坊类/招募类/文体活动类/通知类
     source TEXT DEFAULT auto,               -- auto(AI自动沉淀)/manual(人工新增)/llm
-    status TEXT DEFAULT online,             -- online/offline(下架)
+    status TEXT DEFAULT published,          -- published(已发布)/draft(待审核,AI沉淀先入draft人工审核)
+    origin_title TEXT DEFAULT '',           -- 推文AI提取时的来源推文标题
     updated_at TEXT DEFAULT (datetime(now))
 );
 
@@ -133,4 +135,15 @@ CREATE TABLE notifications (
     content TEXT,
     is_read INTEGER DEFAULT 0,
     sent_at TEXT DEFAULT (datetime(now))
+);
+
+-- 十、qa_logs 答疑日志表(负责:POD-1,新增 v1.3,只写日志不改业务表)
+CREATE TABLE qa_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER,
+    question TEXT NOT NULL,
+    answer TEXT,
+    source TEXT,
+    count INTEGER DEFAULT 1,                -- 同问题出现次数(高频沉淀统计用)
+    created_at TEXT
 );
