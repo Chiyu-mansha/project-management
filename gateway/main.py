@@ -34,8 +34,9 @@ def hello():
 # ---------- 请求体 ----------
 
 class GenerateArticleReq(BaseModel):
-    activity_id: int
-    style: str = "简约"  # 简约 / 活泼 / 正式
+    style: str = "简约"                 # 简约 / 活泼 / 正式
+    activity: dict = {}                 # 活动信息，由 backend 查表后传入
+    activity_id: Optional[int] = None   # 保留 id 用于日志，可选
 
 
 class ChatReq(BaseModel):
@@ -62,17 +63,27 @@ class RecommendReq(BaseModel):
 
 @app.post("/api/ai/generate-article")
 def generate_article(req: GenerateArticleReq):
-    # TODO(成员2): 按 activity_id 查 activities 表，拼入活动信息，再调网关
-    prompt = f"为活动 id={req.activity_id} 写一篇「{req.style}」风格的校园推文。"
-    return {"content": ai_gateway.generate_text(prompt)}
-
+    # 网关不查库，只负责把 member-2 传过来的 activity 对象拼成 Prompt
+    a = req.activity or {}
+    prompt = "\n".join([
+        f"请为下面这个活动写一篇「{req.style}」风格的校园推文，用 Markdown 格式：",
+        f"- 标题：{a.get('title', '')}",
+        f"- 主办方：{a.get('organizer', '')}",
+        f"- 类型：{a.get('type', '')}",
+        f"- 时间：{a.get('start_time', '')} ~ {a.get('end_time', '')}",
+        f"- 地点：{a.get('location', '')}",
+        f"- 报名截止：{a.get('signup_deadline', '')}",
+        f"- 综测加分：{a.get('zongce_score', '')}",
+        f"- 简介：{a.get('description', '')}",
+    ])
+    return {"content": ai_gateway.generate_text(prompt=prompt)}
 
 # ---------- 能力 1：智能答疑（对话） ----------
 
 @app.post("/api/ai/chat")
 def chat(req: ChatReq):
-    # TODO(成员3): 先查 faqs 表，命中直接返回 source="faq"，未命中再调本接口兜底
-    result = ai_gateway.chat(req.question)
+    # 透传 activity_id
+    result = ai_gateway.chat(req.question, activity_id=req.activity_id)
     return {"answer": result["answer"], "source": result["source"]}
 
 
@@ -94,5 +105,11 @@ def similar_question(req: SimilarReq):
 
 @app.post("/api/ai/recommend")
 def recommend(req: RecommendReq):
-    # TODO(POD-2): 按 user_id 查画像 + 拉活动候选列表，再调网关
-    return {"items": ai_gateway.recommend({"user_id": req.user_id}, [])}
+    # TODO(POD-2): 后续按 user_id 查画像 + 拉活动候选列表（查库后替换掉 mock_candidates）
+    # 临时 Mock 几个候选活动，验证网关透传和推荐逻辑
+    mock_candidates = [
+        {"id": 1, "tags": "编程"},
+        {"id": 2, "tags": "篮球"},
+        {"id": 3, "tags": "讲座"}
+    ]
+    return {"items": ai_gateway.recommend({"user_id": req.user_id}, mock_candidates)}
