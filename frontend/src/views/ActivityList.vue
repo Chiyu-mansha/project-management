@@ -4,6 +4,11 @@
       <el-select v-model="query.type" placeholder="活动类型" clearable filterable allow-create default-first-option style="width:150px" @change="load">
         <el-option v-for="t in TYPES" :key="t" :label="t" :value="t" />
       </el-select>
+      <el-select v-model="query.status" placeholder="状态" clearable style="width:120px" @change="load">
+        <el-option label="草稿" value="draft" /><el-option label="已发布" value="published" />
+        <el-option label="进行中" value="ongoing" /><el-option label="已结束" value="finished" />
+        <el-option label="已取消" value="cancelled" />
+      </el-select>
       <el-input v-model="query.tags" placeholder="标签筛选" clearable style="width:160px" @keyup.enter="load" />
       <el-input v-model="query.keyword" placeholder="搜索标题/简介" clearable :prefix-icon="Search" style="width:220px" @keyup.enter="load" />
       <el-button type="primary" @click="load">搜索</el-button>
@@ -18,8 +23,7 @@
       <el-table-column prop="type" label="类型" width="120">
         <template #default="s"><el-tag v-if="s.row.type" type="primary" effect="plain">{{ s.row.type }}</el-tag></template>
       </el-table-column>
-      <el-table-column prop="organizer" label="主办方" width="130" />
-      <el-table-column label="开始时间" width="170">
+      <el-table-column label="开始时间" width="160">
         <template #default="s">{{ fmtTime(s.row.start_time) }}</template>
       </el-table-column>
       <el-table-column prop="location" label="地点" min-width="120" />
@@ -43,15 +47,22 @@ import { ref, reactive, onMounted } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 
 const API = 'http://localhost:8000'
-const TYPES = ['讲座', '竞赛', '文体', '社会实践', '科创', '招募']
+const TYPES = ['学科类', '文体类', '科创竞赛', '社会实践']
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
-const query = reactive({ type: '', tags: '', keyword: '' })
+const query = reactive({ type: '', tags: '', keyword: '', status: '' })
 
 const fmtTime = (s) => (s ? String(s).replace('T', ' ') : '—')
-const statusText = (s) => ({ draft: '草稿', published: '已发布', cancelled: '已取消' }[s] || s)
-const statusType = (s) => ({ draft: 'info', published: 'success', cancelled: 'danger' }[s] || 'info')
+const STATUS = {
+  draft: { text: '草稿', type: 'info' },
+  published: { text: '已发布', type: 'success' },
+  ongoing: { text: '进行中', type: 'warning' },
+  finished: { text: '已结束', type: 'primary' },
+  cancelled: { text: '已取消', type: 'danger' },
+}
+const statusText = (s) => STATUS[s]?.text || s
+const statusType = (s) => STATUS[s]?.type || 'info'
 
 const load = async () => {
   loading.value = true
@@ -60,6 +71,7 @@ const load = async () => {
     if (query.type) p.append('type', query.type)
     if (query.tags) p.append('tags', query.tags)
     if (query.keyword) p.append('keyword', query.keyword)
+    if (query.status) p.append('status', query.status)
     const d = await (await fetch(`${API}/api/activities?${p}`)).json()
     rows.value = d.items || []
     total.value = d.total

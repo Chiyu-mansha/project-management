@@ -13,15 +13,18 @@
       <el-descriptions-item label="状态">
         <el-tag :type="statusType(act.status)">{{ statusText(act.status) }}</el-tag>
       </el-descriptions-item>
-      <el-descriptions-item label="主办方">{{ act.organizer || '-' }}</el-descriptions-item>
       <el-descriptions-item label="地点">{{ act.location || '-' }}</el-descriptions-item>
       <el-descriptions-item label="开始时间">{{ fmtTime(act.start_time) }}</el-descriptions-item>
       <el-descriptions-item label="结束时间">{{ fmtTime(act.end_time) }}</el-descriptions-item>
       <el-descriptions-item label="报名截止">{{ fmtTime(act.signup_deadline) }}</el-descriptions-item>
-      <el-descriptions-item label="人数上限">{{ act.max_participants ?? '不限' }}</el-descriptions-item>
+      <el-descriptions-item label="队伍人数">{{ act.min_team_member }} ~ {{ act.max_team_member }} 人</el-descriptions-item>
+      <el-descriptions-item label="队伍上限">{{ act.max_participants ?? '不限' }}</el-descriptions-item>
       <el-descriptions-item label="电子票">{{ act.has_ticket ? '是' : '否' }}</el-descriptions-item>
-      <el-descriptions-item label="综测加分">{{ act.zongce_score || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="综合素养分">{{ act.comprehensive_score ? '能加' : '不加' }}</el-descriptions-item>
+      <el-descriptions-item label="操行分">{{ act.conduct_score ?? '-' }}</el-descriptions-item>
+      <el-descriptions-item label="创新分">{{ act.innovation_score ?? '-' }}</el-descriptions-item>
       <el-descriptions-item label="标签">{{ act.tags || '-' }}</el-descriptions-item>
+      <el-descriptions-item label="报名条件" :span="2">{{ act.requirements || '-' }}</el-descriptions-item>
       <el-descriptions-item label="简介" :span="2">{{ act.description || '-' }}</el-descriptions-item>
     </el-descriptions>
   </div>
@@ -36,8 +39,15 @@ const route = useRoute()
 const act = ref({})
 
 const fmtTime = (s) => (s ? String(s).replace('T', ' ') : '—')
-const statusText = (s) => ({ draft: '草稿', published: '已发布', cancelled: '已取消' }[s] || s)
-const statusType = (s) => ({ draft: 'info', published: 'success', cancelled: 'danger' }[s] || 'info')
+const STATUS = {
+  draft: { text: '草稿', type: 'info' },
+  published: { text: '已发布', type: 'success' },
+  ongoing: { text: '进行中', type: 'warning' },
+  finished: { text: '已结束', type: 'primary' },
+  cancelled: { text: '已取消', type: 'danger' },
+}
+const statusText = (s) => STATUS[s]?.text || s
+const statusType = (s) => STATUS[s]?.type || 'info'
 
 onMounted(async () => {
   const d = await (await fetch(`${API}/api/activities/${route.params.id}`)).json()
