@@ -1,6 +1,8 @@
 -- 校园活动智能通知&报名助理 数据库 schema v1.1
 -- SQLite 版本;与飞书《数据库 Schema v1.1》文档保持一致
 -- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
+-- v1.1 备注(10-11 复议):activities 报名截止字段回退为 signup_deadline
+-- (POD-1 实现已用该名,原提出方撤回 registration_deadline)
 -- 约定:表名复数、字段 snake_case、主键统一 id 自增;每张表标注负责 POD
 
 -- 一、users 用户表(负责:POD-2)——仅存学生;发布者见 organizers 表
@@ -46,7 +48,7 @@ CREATE TABLE activities (
     comprehensive_score INTEGER,            -- 综合素养评定积分(0/1 是否加分)
     conduct_score DECIMAL(3,1),             -- 操行分(具体分值)
     innovation_score DECIMAL(3,1),          -- 创新分(具体分值)
-    registration_deadline TEXT,             -- 报名截止
+    signup_deadline TEXT,                   -- 报名截止(10-11 复议回退,以 POD-1 实现为准)
     min_team_member INTEGER NOT NULL,       -- 队伍最少人数(含队长,发布时设置)
     max_team_member INTEGER NOT NULL,       -- 队伍最多人数(含队长,发布时设置)
     max_participants INTEGER,               -- 报名上限(队数,空=不限)
