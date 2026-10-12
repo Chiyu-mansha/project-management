@@ -1,6 +1,7 @@
 # 前端
 node_modules/
 dist/
+output/playwright/
 
 # 后端
 venv/

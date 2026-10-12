@@ -28,7 +28,9 @@ npm install
 npm run dev
 ```
 
-打开 http://localhost:5173,点「检测后端连接」按钮,显示"已连通"即最简链路打通 ✅
+打开 http://localhost:5173 查看报名模块入口。POD-2 报名前端按文档提供弹窗和列表组件，由 POD-1 的活动页面传入活动 ID、由认证域传入登录状态，接入方式见 [frontend/INTEGRATION.md](frontend/INTEGRATION.md)。当前后端仍只有 `/api/hello`，报名业务接口尚需后端成员提供。
+
+前端校验：`npm test`；生产构建：`npm run build`。
 
 ## 目录结构
 
@@ -38,7 +40,9 @@ backend/
   schema.sql       # 五张核心表建表语句
   requirements.txt
 frontend/
-  src/App.vue      # 入口页面(内置后端连通检测)
+  src/App.vue      # 入口页面
+  src/api/         # 文档约定的报名请求与 Bearer token
+  src/domain/      # POD-2 报名组件及供 POD-1 调用的函数
 ```
 
 ## 分支规则
