@@ -2,6 +2,7 @@
 -- SQLite 版本;与飞书《数据库 Schema v1.3》文档保持一致
 -- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
 -- v1.3 备注(10-11 变更申请):faqs 改 status 枚举 published/draft、category 按活动类型口径、新增 origin_title;新增 qa_logs 表(POD-1 申请,PM 批准)
+-- 10-12 修正(POD-2 指出):时间默认值 datetime(now) → datetime('now'),不加引号会被 SQLite 当列名解析为 NULL
 -- v1.2 备注(10-11 拍板):activities.status 增加 cancelled(POD-1 提案,PM 拍板)
 -- v1.1 备注(10-11 复议):activities 报名截止字段回退为 signup_deadline
 -- (POD-1 实现已用该名,原提出方撤回 registration_deadline)
@@ -20,8 +21,8 @@ CREATE TABLE users (
     need_comprehensive_score INTEGER,       -- 综合素养评定积分画像(0/1 是否需要)
     need_conduct_score INTEGER,             -- 操行分画像(0/1)
     need_innovation_score INTEGER,          -- 创新分画像(0/1)
-    created_at TEXT DEFAULT (datetime(now)),
-    updated_at TEXT DEFAULT (datetime(now))
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- 二、organizers 发布者表(负责:POD-1,新增 v1.1)
@@ -31,7 +32,7 @@ CREATE TABLE organizers (
     password_hash TEXT NOT NULL,            -- 密码哈希
     name TEXT NOT NULL,                     -- 发布者姓名
     organization TEXT,                      -- 组织/社团
-    created_at TEXT DEFAULT (datetime(now))
+    created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- 三、activities 活动/竞赛表(负责:POD-1)
@@ -55,7 +56,7 @@ CREATE TABLE activities (
     max_team_member INTEGER NOT NULL,       -- 队伍最多人数(含队长,发布时设置)
     max_participants INTEGER,               -- 报名上限(队数,空=不限)
     status TEXT DEFAULT draft,              -- draft/published/ongoing/finished/cancelled(v1.2 新增)
-    created_at TEXT DEFAULT (datetime(now))
+    created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- 四、registrations 报名表(负责:POD-2)
@@ -64,7 +65,7 @@ CREATE TABLE registrations (
     activity_id INTEGER NOT NULL,           -- 对应 activities.id
     user_id INTEGER NOT NULL,               -- 对应 users.id(队长)
     form_id INTEGER NOT NULL,               -- 对应 forms.id
-    registered_at TEXT DEFAULT (datetime(now)),
+    registered_at TEXT DEFAULT (datetime('now')),
     extra_fields TEXT,                      -- 自定义报名字段,JSON
     UNIQUE(activity_id, user_id),           -- 每个用户只能作为队长报名一次
     FOREIGN KEY(activity_id) REFERENCES activities(id),
@@ -79,8 +80,8 @@ CREATE TABLE forms (
     organizer_id INTEGER NOT NULL,          -- 发布者 organizers.id
     form_team_schema TEXT,                  -- 队伍公共表单 JSON(原 team_fields)
     form_member_schema TEXT,                -- 每个队员的表单 JSON(原 member_fields)
-    created_at TEXT DEFAULT (datetime(now)),
-    updated_at TEXT DEFAULT (datetime(now)),
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY(activity_id) REFERENCES activities(id),
     FOREIGN KEY(organizer_id) REFERENCES organizers(id)
 );
@@ -110,7 +111,7 @@ CREATE TABLE credentials (
     signed_at TEXT,                         -- 电子签章时间
     pdf_path TEXT,                          -- 凭证 PDF 文件路径
     comprehensive_score INTEGER,            -- 本活动综测加分(0/1,冗余,导出用)
-    created_at TEXT DEFAULT (datetime(now))
+    created_at TEXT DEFAULT (datetime('now'))
 );
 
 -- 八、faqs FAQ 表(负责:POD-1)
@@ -123,7 +124,7 @@ CREATE TABLE faqs (
     source TEXT DEFAULT auto,               -- auto(AI自动沉淀)/manual(人工新增)/llm
     status TEXT DEFAULT published,          -- published(已发布)/draft(待审核,AI沉淀先入draft人工审核)
     origin_title TEXT DEFAULT '',           -- 推文AI提取时的来源推文标题
-    updated_at TEXT DEFAULT (datetime(now))
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- 九、notifications 通知表(负责:POD-1,读写全归 POD-1)
@@ -134,7 +135,7 @@ CREATE TABLE notifications (
     type TEXT,                              -- 报名提醒/截止预警/变更通知/开奖提醒/凭证通知
     content TEXT,
     is_read INTEGER DEFAULT 0,
-    sent_at TEXT DEFAULT (datetime(now))
+    sent_at TEXT DEFAULT (datetime('now'))
 );
 
 -- 十、qa_logs 答疑日志表(负责:POD-1,新增 v1.3,只写日志不改业务表)
