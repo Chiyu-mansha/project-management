@@ -5,6 +5,7 @@ import QaChat from '../views/QaChat.vue'
 import ActivityList from '../views/ActivityList.vue'
 import ActivityForm from '../views/ActivityForm.vue'
 import ActivityDetail from '../views/ActivityDetail.vue'
+import DemoApp from '../../demo/DemoApp.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -16,5 +17,6 @@ export default createRouter({
     { path: '/activities/new', component: ActivityForm },
     { path: '/activities/:id', component: ActivityDetail },
     { path: '/activities/:id/edit', component: ActivityForm },
+    { path: '/registrations', component: DemoApp },
   ],
 })

@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
-DB_PATH = BASE_DIR / "app.db"
+DB_PATH = BASE_DIR / "campus.db"   # PM 合并仪式统一:与 POD-2 db.py 共用同一个库文件(原 app.db)
 SCHEMA_PATH = BASE_DIR / "schema.sql"
 
 
