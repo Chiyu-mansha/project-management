@@ -1,4 +1,9 @@
-"""SQLite persistence for the formal POD-3 MVP service."""
+"""SQLite persistence for the POD-3 credential service.
+
+The users and activities tables belong to POD-2 and POD-1 respectively. This
+module only initializes POD-3-owned tables and never creates or writes those
+shared-domain tables.
+"""
 
 from __future__ import annotations
 
@@ -47,6 +52,9 @@ class Database:
     def decode_user(row: dict[str, Any] | None) -> dict[str, Any] | None:
         if row is None:
             return None
-        row["roles"] = json.loads(row.get("roles") or "[]")
-        row["organization_ids"] = json.loads(row.get("organization_ids") or "[]")
-        return row
+        result = dict(row)
+        for field in ("roles", "organization_ids"):
+            value = result.get(field)
+            if isinstance(value, str):
+                result[field] = json.loads(value or "[]")
+        return result

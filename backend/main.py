@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
 import os
 import uuid
@@ -13,6 +12,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -23,21 +23,18 @@ except ImportError:  # pragma: no cover - dependency is installed from requireme
     def load_dotenv(*_: Any, **__: Any) -> bool:
         return False
 
-from auth import create_access_token, get_current_user, require_roles
+from auth import get_current_user, require_roles
 from database import Database
-from integrations import ActivityClient, UserClient
+from integrations import ActivityClient
 from storage import CredentialPdfTemplate, HttpSealService, LocalFileStorage, LocalSealService, build_csv, build_student_bundle, build_xlsx
 
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
-if os.getenv("APP_ENV", "development").lower() == "production" and os.getenv("JWT_SECRET", "dev-only-change-me") == "dev-only-change-me":
-    raise RuntimeError("JWT_SECRET must be configured in production")
-DB_PATH = os.getenv("POD3_DB_PATH", str(BASE_DIR / "pod3.db"))
+DB_PATH = os.getenv("POD3_DB_PATH", str(BASE_DIR / "campus.db"))
 STORAGE_ROOT = os.getenv("POD3_STORAGE_ROOT", str(BASE_DIR / "storage"))
 database = Database(DB_PATH, BASE_DIR / "pod3_schema.sql")
 activity_client = ActivityClient(database)
-user_client = UserClient(database)
 file_storage = LocalFileStorage(STORAGE_ROOT)
 pdf_template = CredentialPdfTemplate()
 seal_service = HttpSealService(os.environ["SEAL_SERVICE_URL"]) if os.getenv("SEAL_SERVICE_URL") else LocalSealService()
@@ -85,12 +82,6 @@ class SignRequest(BaseModel):
     signed_by: str | None = None
 
 
-class DevTokenRequest(BaseModel):
-    subject: str
-    roles: list[str] = Field(default_factory=lambda: ["STUDENT"])
-    organization_ids: list[str] = Field(default_factory=list)
-
-
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -108,7 +99,8 @@ def fail(code: str, message: str, http_status: int, **details: Any) -> None:
 
 def auth_token(request: Request) -> str | None:
     value = request.headers.get("Authorization", "")
-    return value[7:].strip() if value.startswith("Bearer ") else None
+    scheme, _, token = value.partition(" ")
+    return token.strip() if scheme.lower() == "bearer" and token.strip() else None
 
 
 def is_admin(user: dict[str, Any]) -> bool:
@@ -121,36 +113,6 @@ def require_uuid(value: str, field: str) -> str:
     except (ValueError, AttributeError):
         fail("VALIDATION_ERROR", f"{field} must be a UUID", 400, field=field)
     raise AssertionError("unreachable")
-
-
-def ensure_local_user(user_id: str, claims: dict[str, Any], token: str | None) -> dict[str, Any]:
-    existing = user_client.get(user_id, token)
-    if existing:
-        return existing
-    if os.getenv("USER_SERVICE_URL"):
-        fail("RESOURCE_NOT_FOUND", "User was not found in the user service", 404, user_id=user_id)
-    roles = [str(role).upper() for role in claims.get("roles", ["STUDENT"])]
-    organization_ids = claims.get("organization_ids", [])
-    with database.transaction() as connection:
-        connection.execute(
-            "INSERT OR IGNORE INTO users (id, student_id, name, roles, organization_ids) VALUES (?, ?, ?, ?, ?)",
-            (user_id, user_id, user_id, json.dumps(roles), json.dumps(organization_ids)),
-        )
-    return {"id": user_id, "student_id": user_id, "name": user_id, "roles": roles, "organization_ids": organization_ids}
-
-
-def ensure_local_activity(activity_id: str, payload: CheckInRequest, organizer_id: str, token: str | None) -> dict[str, Any]:
-    activity = activity_client.get(activity_id, token)
-    if activity:
-        return activity
-    if os.getenv("ACTIVITY_SERVICE_URL"):
-        fail("RESOURCE_NOT_FOUND", "Activity was not found in the activity service", 404, activity_id=activity_id)
-    with database.transaction() as connection:
-        connection.execute(
-            "INSERT OR IGNORE INTO activities (id, title, organizer_id, organizer_name, comprehensive_score) VALUES (?, ?, ?, ?, ?)",
-            (activity_id, payload.title, organizer_id, payload.organizer_name, payload.comprehensive_score),
-        )
-    return {"id": activity_id, "title": payload.title, "organizer_id": organizer_id, "organizer_name": payload.organizer_name, "comprehensive_score": payload.comprehensive_score}
 
 
 def role_access(user: dict[str, Any], activity: dict[str, Any]) -> bool:
@@ -171,13 +133,6 @@ def hello() -> dict[str, str]:
     return {"message": "backend ok", "service": "pod3-credential"}
 
 
-@app.post("/api/auth/dev-token")
-def dev_token(payload: DevTokenRequest) -> dict[str, str]:
-    if os.getenv("APP_ENV", "development").lower() == "production":
-        fail("NOT_FOUND", "Development token endpoint is disabled", 404)
-    return {"access_token": create_access_token(payload.subject, payload.roles, payload.organization_ids), "token_type": "bearer"}
-
-
 @app.post("/api/activities/{activity_id}/checkin", status_code=201)
 def checkin(
     activity_id: str,
@@ -193,8 +148,9 @@ def checkin(
     if not is_admin(user) and user["sub"] != student_id:
         fail("FORBIDDEN", "Students can only check in themselves", 403)
     token = auth_token(request)
-    ensure_local_user(student_id, user, token)
-    activity = ensure_local_activity(activity_id, payload, user["sub"], token)
+    activity = activity_client.get(activity_id, token)
+    if not activity:
+        fail("RESOURCE_NOT_FOUND", "Activity not found", 404, activity_id=activity_id)
     with closing(database.connect()) as connection:
         row = connection.execute(
             "SELECT cr.id AS checkin_id, cr.activity_id, cr.student_id, cr.status AS checkin_status, cr.channel, cr.checkin_at, c.* FROM checkin_records cr JOIN credentials c ON c.checkin_id = cr.id WHERE cr.idempotency_key = ?",
@@ -203,7 +159,7 @@ def checkin(
         if row:
             checkin_result = {"id": row["checkin_id"], "activity_id": row["activity_id"], "student_id": row["student_id"], "status": row["checkin_status"], "channel": row["channel"], "checkin_at": row["checkin_at"]}
             credential_result = {key: row[key] for key in ["id", "credential_no", "checkin_id", "activity_id", "student_id", "title", "organizer_name", "comprehensive_score", "status", "issued_at", "confirmed_at", "sealed_at", "pdf_object_key", "pdf_sha256"]}
-            return JSONResponse(status_code=200, content={"check_in": checkin_result, "credential": credential_dict(credential_result)})
+            return JSONResponse(status_code=200, content=jsonable_encoder({"check_in": checkin_result, "credential": credential_dict(credential_result)}))
         duplicate = connection.execute(
             "SELECT id FROM checkin_records WHERE activity_id = ? AND student_id = ? AND status = 'SUCCESS'",
             (activity_id, student_id),
@@ -224,13 +180,13 @@ def checkin(
         fail("DATABASE_ERROR", "Unable to save check-in", 500, reason=str(exc))
     score = payload.comprehensive_score if payload.comprehensive_score is not None else activity.get("comprehensive_score")
     credential_result = {"id": credential_id, "credential_no": credential_no, "checkin_id": checkin_id, "activity_id": activity_id, "student_id": student_id, "title": payload.title, "organizer_name": payload.organizer_name or activity.get("organizer_name"), "comprehensive_score": score, "status": "ISSUED", "issued_at": issued_at, "confirmed_at": None, "sealed_at": None, "pdf_object_key": None, "pdf_sha256": None}
-    return JSONResponse(status_code=201, content={"check_in": {"id": checkin_id, "activity_id": activity_id, "student_id": student_id, "status": "SUCCESS", "channel": payload.channel, "checkin_at": checked_in_at}, "credential": credential_result})
+    return JSONResponse(status_code=201, content=jsonable_encoder({"check_in": {"id": checkin_id, "activity_id": activity_id, "student_id": student_id, "status": "SUCCESS", "channel": payload.channel, "checkin_at": checked_in_at}, "credential": credential_result}))
 
 
 @app.get("/api/activities/{activity_id}/checkin-list")
-def checkin_list(activity_id: str, user: dict[str, Any] = Depends(require_roles("ORGANIZER", "ADMIN"))) -> dict[str, Any]:
+def checkin_list(activity_id: str, request: Request, user: dict[str, Any] = Depends(require_roles("ORGANIZER", "ADMIN"))) -> dict[str, Any]:
     activity_id = require_uuid(activity_id, "activity_id")
-    activity = activity_client.get(activity_id)
+    activity = activity_client.get(activity_id, auth_token(request))
     if not activity:
         fail("RESOURCE_NOT_FOUND", "Activity not found", 404, activity_id=activity_id)
     if not role_access(user, activity):
@@ -241,9 +197,9 @@ def checkin_list(activity_id: str, user: dict[str, Any] = Depends(require_roles(
 
 
 @app.post("/api/activities/{activity_id}/confirm", status_code=201)
-def confirm(activity_id: str, payload: ConfirmRequest, user: dict[str, Any] = Depends(require_roles("ORGANIZER", "ADMIN"))) -> dict[str, Any]:
+def confirm(activity_id: str, payload: ConfirmRequest, request: Request, user: dict[str, Any] = Depends(require_roles("ORGANIZER", "ADMIN"))) -> dict[str, Any]:
     activity_id = require_uuid(activity_id, "activity_id")
-    activity = activity_client.get(activity_id)
+    activity = activity_client.get(activity_id, auth_token(request))
     if not activity:
         fail("RESOURCE_NOT_FOUND", "Activity not found", 404, activity_id=activity_id)
     if not role_access(user, activity):
@@ -272,13 +228,13 @@ def confirm(activity_id: str, payload: ConfirmRequest, user: dict[str, Any] = De
 
 
 @app.post("/api/credentials/{credential_id}/sign")
-def sign_credential(credential_id: str, payload: SignRequest, user: dict[str, Any] = Depends(require_roles("ORGANIZER", "ADMIN"))) -> dict[str, Any]:
+def sign_credential(credential_id: str, payload: SignRequest, request: Request, user: dict[str, Any] = Depends(require_roles("ORGANIZER", "ADMIN"))) -> dict[str, Any]:
     credential_id = require_uuid(credential_id, "credential_id")
     with closing(database.connect()) as connection:
         row = database.row(connection.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone())
     if not row:
         fail("RESOURCE_NOT_FOUND", "Credential not found", 404)
-    activity = activity_client.get(row["activity_id"])
+    activity = activity_client.get(row["activity_id"], auth_token(request))
     if not activity or not role_access(user, activity):
         fail("FORBIDDEN", "You are not allowed to sign this credential", 403)
     if row["status"] != "CONFIRMED":
@@ -326,7 +282,7 @@ def export_credentials(request: Request, activity_id: str | None = Query(default
         activity_id = require_uuid(activity_id, "activity_id")
         if not (is_admin(user) or "ORGANIZER" in {str(role).upper() for role in user.get("roles", [])}):
             fail("FORBIDDEN", "Only organizers can export an activity roster", 403)
-        activity = activity_client.get(activity_id)
+        activity = activity_client.get(activity_id, auth_token(request))
         if not activity or not role_access(user, activity):
             fail("FORBIDDEN", "You are not allowed to export this activity", 403)
         export_type = "ORGANIZER_BONUS_LIST"

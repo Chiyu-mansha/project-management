@@ -1,26 +1,8 @@
--- POD-3 formal SQLite MVP schema.
--- Production migration target is pod3-week1/db/pod3-schema.sql (PostgreSQL).
+-- POD-3-owned SQLite MVP schema v1.3.
+-- users belongs to POD-2 and activities belongs to POD-1. They are shared
+-- tables and are intentionally not created or written by this schema.
 
 PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    student_id TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    roles TEXT NOT NULL DEFAULT '["STUDENT"]',
-    organization_ids TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS activities (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    organizer_id TEXT NOT NULL,
-    organizer_name TEXT,
-    comprehensive_score REAL,
-    status TEXT NOT NULL DEFAULT 'published',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
 
 CREATE TABLE IF NOT EXISTS checkin_records (
     id TEXT PRIMARY KEY,

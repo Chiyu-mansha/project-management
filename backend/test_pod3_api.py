@@ -14,10 +14,38 @@ class Pod3FormalApiTest(unittest.TestCase):
         cls.temp_dir = tempfile.TemporaryDirectory(prefix="pod3-api-test-")
         os.environ["POD3_DB_PATH"] = os.path.join(cls.temp_dir.name, "pod3.db")
         os.environ["POD3_STORAGE_ROOT"] = os.path.join(cls.temp_dir.name, "storage")
-        os.environ["JWT_SECRET"] = "test-secret-for-pod3"
+        os.environ["AUTH_SERVICE_URL"] = ""
+        os.environ["ACTIVITY_SERVICE_URL"] = ""
+        os.environ["USER_SERVICE_URL"] = ""
         import main
 
         cls.app = main.app
+        cls.database = main.database
+        connection = cls.database.connect()
+        try:
+            existing_tables = {
+                row[0]
+                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            }
+        finally:
+            connection.close()
+        if existing_tables.intersection({"users", "activities"}):
+            raise AssertionError("POD-3 schema must not create shared users/activities tables")
+        with cls.database.transaction() as connection:
+            # This table is owned and populated by POD-1 in the integrated
+            # database. The POD-3 schema must not create it.
+            connection.execute(
+                """
+                CREATE TABLE activities (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    organizer_id TEXT NOT NULL,
+                    organizer_name TEXT,
+                    comprehensive_score REAL,
+                    status TEXT NOT NULL DEFAULT 'published'
+                )
+                """
+            )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -64,13 +92,15 @@ class Pod3FormalApiTest(unittest.TestCase):
     def test_required_pod3_flow(self) -> None:
         user_id = str(uuid.uuid4())
         activity_id = str(uuid.uuid4())
-        status, token_payload = self.request(
-            "POST",
-            "/api/auth/dev-token",
-            {"subject": user_id, "roles": ["STUDENT", "ORGANIZER"]},
+        os.environ["POD3_TEST_TOKENS"] = json.dumps(
+            {"organizer-token": {"sub": user_id, "roles": ["STUDENT", "ORGANIZER"]}}
         )
-        self.assertEqual(status, 200)
-        auth = {"Authorization": f"Bearer {token_payload['access_token']}"}
+        with self.database.transaction() as connection:
+            connection.execute(
+                "INSERT INTO activities (id, title, organizer_id, organizer_name, comprehensive_score) VALUES (?, ?, ?, ?, ?)",
+                (activity_id, "POD-3 联调活动", user_id, "POD-3 组织方", 2.0),
+            )
+        auth = {"Authorization": "Bearer organizer-token"}
 
         status, issued = self.request(
             "POST",
@@ -105,11 +135,10 @@ class Pod3FormalApiTest(unittest.TestCase):
         self.assertEqual(organizer_export["export_type"], "ORGANIZER_BONUS_LIST")
         self.assertTrue(organizer_export["download"]["download_url"].endswith(".xlsx"))
 
-    def test_jwt_and_role_guards(self) -> None:
+    def test_simple_token_and_role_guards(self) -> None:
         user_id = str(uuid.uuid4())
-        status, token_payload = self.request("POST", "/api/auth/dev-token", {"subject": user_id, "roles": ["STUDENT"]})
-        self.assertEqual(status, 200)
-        auth = {"Authorization": f"Bearer {token_payload['access_token']}"}
+        os.environ["POD3_TEST_TOKENS"] = json.dumps({"student-token": {"sub": user_id, "roles": ["STUDENT"]}})
+        auth = {"Authorization": "Bearer student-token"}
         status, _ = self.request("GET", f"/api/activities/{uuid.uuid4()}/checkin-list", headers=auth)
         self.assertEqual(status, 403)
         status, _ = self.request("GET", "/api/credentials")

@@ -1,21 +1,19 @@
-"""Small, dependency-free JWT HS256 implementation for the MVP.
+"""Authentication adapter for the shared authentication domain.
 
-The production deployment should use the team's shared identity provider and
-rotate JWT_SECRET through the secret manager. Keeping the implementation here
-avoids coupling POD-3 to a second authentication library while the modules are
-being integrated.
+POD-3 deliberately treats the value in ``Authorization: Bearer`` as an
+opaque simple token. It does not issue, decode, or verify JWTs. In the
+integrated environment the token is validated by the shared authentication
+service through ``AUTH_SERVICE_URL``. ``POD3_TEST_TOKENS`` exists only for
+isolated automated tests and is never a production authentication mechanism.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 import os
-import time
 from typing import Any
 
+import requests
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -23,86 +21,91 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def _b64encode(value: bytes) -> str:
-    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+def _unauthorized(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"code": "UNAUTHORIZED", "message": message},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
-def _b64decode(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+def _normalize_user(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict) and payload.get("data") is not None:
+        payload = payload["data"]
+    if not isinstance(payload, dict):
+        raise ValueError("authentication service returned an invalid user")
+
+    subject = payload.get("sub") or payload.get("user_id") or payload.get("id")
+    if not isinstance(subject, str) or not subject:
+        raise ValueError("authentication service did not return a user id")
+
+    roles = payload.get("roles")
+    if roles is None and payload.get("role") is not None:
+        roles = [payload["role"]]
+    if isinstance(roles, str):
+        roles = [roles]
+    if not isinstance(roles, list):
+        roles = []
+
+    return {**payload, "sub": subject, "roles": roles}
 
 
-def create_access_token(
-    subject: str,
-    roles: list[str] | None = None,
-    organization_ids: list[str] | None = None,
-    *,
-    expires_in_seconds: int = 3600,
-    secret: str | None = None,
-) -> str:
-    """Create a token for local integration tests and service smoke tests."""
-    header = {"alg": "HS256", "typ": "JWT"}
-    payload: dict[str, Any] = {
-        "sub": subject,
-        "roles": roles or ["STUDENT"],
-        "organization_ids": organization_ids or [],
-        "iat": int(time.time()),
-        "exp": int(time.time()) + expires_in_seconds,
-    }
-    encoded_header = _b64encode(json.dumps(header, separators=(",", ":")).encode())
-    encoded_payload = _b64encode(json.dumps(payload, separators=(",", ":")).encode())
-    message = f"{encoded_header}.{encoded_payload}".encode()
-    signature = hmac.new(
-        (secret or os.getenv("JWT_SECRET", "dev-only-change-me")).encode(),
-        message,
-        hashlib.sha256,
-    ).digest()
-    return f"{encoded_header}.{encoded_payload}.{_b64encode(signature)}"
-
-
-def decode_access_token(token: str, *, secret: str | None = None) -> dict[str, Any]:
+def _test_user(token: str) -> dict[str, Any] | None:
+    raw = os.getenv("POD3_TEST_TOKENS", "")
+    if not raw:
+        return None
     try:
-        encoded_header, encoded_payload, encoded_signature = token.split(".")
-        header = json.loads(_b64decode(encoded_header))
-        payload = json.loads(_b64decode(encoded_payload))
-        if header.get("alg") != "HS256":
-            raise ValueError("unsupported JWT algorithm")
-        expected = hmac.new(
-            (secret or os.getenv("JWT_SECRET", "dev-only-change-me")).encode(),
-            f"{encoded_header}.{encoded_payload}".encode(),
-            hashlib.sha256,
-        ).digest()
-        if not hmac.compare_digest(expected, _b64decode(encoded_signature)):
-            raise ValueError("invalid JWT signature")
-        if not isinstance(payload.get("sub"), str) or not payload["sub"]:
-            raise ValueError("JWT subject is required")
-        if int(payload.get("exp", 0)) <= int(time.time()):
-            raise ValueError("JWT has expired")
-        if isinstance(payload.get("roles"), str):
-            payload["roles"] = [payload["roles"]]
-        if not isinstance(payload.get("roles", []), list):
-            raise ValueError("JWT roles must be a list")
-        return payload
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise ValueError("invalid JWT") from exc
+        mapping = json.loads(raw)
+        payload = mapping.get(token)
+    except (TypeError, AttributeError, json.JSONDecodeError):
+        return None
+    return _normalize_user(payload) if payload is not None else None
+
+
+def _resolve_from_auth_service(token: str) -> dict[str, Any]:
+    base_url = os.getenv("AUTH_SERVICE_URL", "").rstrip("/")
+    if not base_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "AUTH_SERVICE_UNAVAILABLE", "message": "AUTH_SERVICE_URL is not configured"},
+        )
+
+    endpoint = os.getenv("AUTH_SERVICE_ME_PATH", "/api/auth/me")
+    url = endpoint if endpoint.startswith(("http://", "https://")) else f"{base_url}/{endpoint.lstrip('/')}"
+    try:
+        response = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=3)
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "AUTH_SERVICE_UNAVAILABLE", "message": "Unable to reach authentication service"},
+        ) from exc
+    if response.status_code in {401, 403}:
+        raise _unauthorized("Invalid or expired token")
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "AUTH_SERVICE_ERROR", "message": "Authentication service rejected the request"},
+        )
+    try:
+        return _normalize_user(response.json())
+    except (ValueError, requests.exceptions.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "AUTH_SERVICE_ERROR", "message": "Authentication service returned invalid data"},
+        ) from exc
 
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Security(bearer_scheme),
 ) -> dict[str, Any]:
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "UNAUTHORIZED", "message": "Bearer JWT is required"},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    try:
-        return decode_access_token(credentials.credentials)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "UNAUTHORIZED", "message": str(exc)},
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials.strip():
+        raise _unauthorized("Bearer token is required")
+
+    token = credentials.credentials.strip()
+    local_user = _test_user(token)
+    if local_user is not None:
+        return local_user
+    return _resolve_from_auth_service(token)
 
 
 def require_roles(*required_roles: str):
