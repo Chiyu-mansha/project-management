@@ -2,9 +2,13 @@
 import { ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import AnswersView from './AnswersView.vue'
-import { ContractPendingError, validateDetailView } from '../model.js'
+import { validateDetailView } from '../model.js'
+import { readRegistrationDetail } from '../adapters.js'
 
-const props = defineProps({ api: { type: Object, required: true }, readDetail: Function })
+const props = defineProps({
+  api: { type: Object, required: true },
+  readDetail: { type: Function, default: readRegistrationDetail }
+})
 const emit = defineEmits(['cancelled'])
 const visible = ref(false)
 const record = ref(null)
@@ -31,9 +35,6 @@ async function open(row) {
   error.value = ''
   visible.value = true
   try {
-    if (typeof props.readDetail !== 'function') {
-      throw new ContractPendingError('registrationDetail', '暂时无法查看报名详情，请稍后重试')
-    }
     const data = await props.api.getRegistration(row.registration_id, controller.signal)
     const view = validateDetailView(await props.readDetail(data, { record: row, signal: controller.signal }))
     if (ticket === revision) detail.value = view

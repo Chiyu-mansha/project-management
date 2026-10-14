@@ -15,7 +15,6 @@ from pydantic import BaseModel
 
 import db
 from common import ok
-from activities_stub import router as activities_stub_router
 from forms import router as forms_router
 from registrations import router as registrations_router
 
@@ -38,7 +37,6 @@ app.add_middleware(
 
 app.include_router(forms_router)
 app.include_router(registrations_router)
-app.include_router(activities_stub_router)
 
 
 @app.get("/api/hello")

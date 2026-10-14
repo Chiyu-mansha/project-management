@@ -31,8 +31,6 @@ const registrationDomain = ref(null)
   <RegistrationDomain
     ref="registrationDomain"
     :session="session"
-    :generate-field-key="agreedFieldKeyGenerator"
-    :read-registration-detail="agreedRegistrationDetailReader"
     @back="returnToPublishedActivities"
     @form-saved="refreshPublishedActivities"
     @registration-submitted="refreshActivity"
@@ -54,31 +52,29 @@ const registrationDomain = ref(null)
 
 根 `App.vue` 目前只挂载报名组件，没有虚构会话、活动数据或登录页面。没有 POD-1 入口和登录状态时不会展示假的已登录功能。
 
-## 文档尚未提供的两项
+## 已补齐的两项对接
 
-### 中文题干到英文 field_key 的规则
+### 题干生成拼音 field_key
 
-文档要求“根据 label 转英文、前端自动生成、用户不可编辑”，但没有规定转换方法。本次不自行用序号、拼音、UUID 或翻译 API替代。
+用户于 2026-10-14 确认使用拼音规则。`fieldKeys.js` 使用本地 `pinyin-pro` 生成小写、无声调、下划线分隔的拼音，例如“联系电话”→ `lian_xi_dian_hua`。英文、数字保留，空白和标点归一为下划线，`ü` 用 `v`；数字开头加 `field_` 前缀。纯标点题干给出填写提示。
 
-`generateFieldKey(label)` 接收题干，返回英文 key（可返回 Promise）。收到团队确认的生成规则后在该函数中实现即可。已有题目使用原 key；新题目无规则时阻止提交，并保持弹窗和题目草稿。固定学号姓名不依赖此规则。
+正式组件自带生成器，无需外部传函数。保存时预留该 schema 的全部已有 key；重复或同音题目自动添加 `_2`、`_3` 等后缀。两个 schema 独立。生成后保留 key，编辑题干不会重建标识，已有报名答案仍按原 key 展示。原 `generateFieldKey(label)` 注入入口保留兼容，返回值可为 Promise。
 
-### GET /api/registrations/{id} 的完整响应 JSON
+### GET /api/registrations/{id} 的详情适配
 
-已给文档只指定详情路径和用途，没有完整 JSON；没有猜测它包含 `activity_id`、schema 或 `extra_fields` 的具体嵌套位置。
+默认适配器位于 `adapters.js`，与合并分支 `backend/registrations.py:get_registration` 的实际响应对应。API 层先解开 `{ code: 0, data }`，适配器读取以下路径：
 
-详情请求和弹窗已实现。`readRegistrationDetail(data, { record, signal })` 由最终响应契约对应的适配函数提供；其输出是以下**前端内部展示数据**，不是新增后端 JSON 契约：
+| 后端 data 中的路径 | 前端展示数据 |
+| --- | --- |
+| `form.form_team_schema` | `teamSchema` |
+| `form.form_member_schema` | `memberSchema` |
+| `extra_fields.team_extra` | `teamExtra` |
+| `extra_fields.members` | `members` |
+| `form.min_team_member` 和 `form.max_team_member` 均为 1 | `isIndividual` |
 
-```js
-{
-  teamSchema,       // 模板的 form_team_schema
-  memberSchema,    // 模板的 form_member_schema
-  teamExtra,       // 报名中的队伍答案
-  members,         // 文档定义的 role/member_extra 成员列表
-  isIndividual     // 活动 min/max 均为 1
-}
-```
+未传 `readRegistrationDetail` 也能查看详情。保留原注入入口兼容已有调用方；异常响应明确提示加载失败，允许重试。
 
-取消按钮依据“我的报名”接口中已定义的 `my_role` 显示，不通过详情猜测当前身份。缺少适配函数时不能展示详情或取消，错误不会导致弹窗关闭。
+取消按钮依据“我的报名”接口中的 `my_role` 显示。队长取消成功后刷新列表，后端拒绝取消时保留详情弹窗及线下处理提示。
 
 ## 本地验证
 
@@ -90,6 +86,6 @@ npm run build
 npm run dev
 ```
 
-开发 `/api` 代理到 `http://localhost:8000`；可用 `.env.example` 配置前端 API base。当前仓库后端只实现 `/api/hello`，8 个报名接口需要后端成员提供，不能据此声称已完成真实联调。
+开发 `/api` 代理到 `http://localhost:8000`；可用 `.env.example` 配置前端 API base。合并分支已实现 8 个报名接口。活动详情 `GET /api/activities/{id}` 由 POD-1 提供；本次已清理临时活动只读桩及其入口注册，单独运行 POD-2 后端时不再提供这个活动域接口。
 
-启动开发服务后，可访问 `/tests/browser/index.html` 查看隔离的文档样例验证页。这里的身份切换、错误开关、请求记录仅用于测试，不进入生产入口。测试只使用已提供的表单和报名样例；详情测试返回 `data:null` 并用显式测试适配函数读取内存样例，不把未定稿的响应 JSON 当成契约。
+启动开发服务后，可访问 `/tests/browser/index.html` 查看隔离的回归验证页。身份切换、错误开关、请求记录仅用于测试，不进入生产入口。详情测试按已实现后端返回 JSON，直接使用正式默认适配器；新增题目也使用正式拼音生成器。`frontend/demo/`、`backend/activities_stub.py`、`backend/seed_demo.py` 已清理。

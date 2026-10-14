@@ -2,8 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createApiClient } from '../src/api/request.js'
 import { createRegistrationApi } from '../src/api/registrations.js'
+import { readRegistrationDetail } from '../src/domain/adapters.js'
+import { generateFieldKey } from '../src/domain/fieldKeys.js'
 import {
-  buildFormPayload, buildRegistrationPayload, ContractPendingError, createRegistrationDraft,
+  buildFormPayload, buildRegistrationPayload, createRegistrationDraft,
   createTemplateDraft, FIXED_MEMBER_FIELDS, newMember, newQuestion, readList, validateTemplate
 } from '../src/domain/model.js'
 
@@ -91,6 +93,35 @@ test('缺少资源 ID 不发请求', async () => {
   assert.throws(() => api.getRegistration(''), /ID/)
 })
 
+test('报名详情直接使用已实现后端的 form/extra_fields，无需外部适配函数', async () => {
+  const form = template()
+  const extra = buildRegistrationPayload(form, completeDraft(form)).extra_fields
+  const data = {
+    registration_id: 3, activity_id: 7, form_id: 1,
+    activity_name: '软件创新大赛', activity_status: 'published',
+    registered_at: '2026-10-01T14:00:00', my_role: 'captain',
+    form, extra_fields: extra
+  }
+  const api = createRegistrationApi(createApiClient({ getToken: () => 'token', fetchImpl: async () => response(data) }))
+  const detail = readRegistrationDetail(await api.getRegistration(3))
+  assert.deepEqual(detail.teamExtra, { project_name: '项目' })
+  assert.equal(detail.teamSchema[0].label, '项目名称')
+  assert.equal(detail.members[1].member_extra.student_id, '2023002')
+  assert.equal(detail.isIndividual, false)
+  data.form = { ...form, min_team_member: 1, max_team_member: 1 }
+  data.extra_fields = { team_extra: extra.team_extra, members: [extra.members[0]] }
+  assert.equal(readRegistrationDetail(data).isIndividual, true)
+})
+
+test('报名详情响应不完整时显示错误，不补造 schema、成员或人数', () => {
+  const data = { form: template(), extra_fields: { team_extra: {}, members: [{ role: 'captain', member_extra: {} }] } }
+  for (const broken of [null, {}, { ...data, form: null }, { ...data, extra_fields: {} },
+    { ...data, form: { ...data.form, min_team_member: undefined } },
+    { ...data, extra_fields: { ...data.extra_fields, members: [] } }]) {
+    assert.throws(() => readRegistrationDetail(broken), /加载失败/)
+  }
+})
+
 test('新建模板无预设队伍题目；只有两个固定队员字段', async () => {
   const draft = createTemplateDraft()
   const payload = await buildFormPayload(draft)
@@ -98,18 +129,43 @@ test('新建模板无预设队伍题目；只有两个固定队员字段', async
   assert.equal(JSON.stringify(payload).includes('_uiId'), false)
 })
 
-test('缺失字段生成规则不能猜测 key；传入约定生成器后保留 key', async () => {
+test('不传生成器也能保存拼音题目；已有 key 在改题干后保留', async () => {
   const draft = createTemplateDraft()
   const field = newQuestion()
   field.label = '项目名称'
   draft.form_team_schema.push(field)
-  await assert.rejects(buildFormPayload(draft), ContractPendingError)
+  const generated = await buildFormPayload(draft)
+  assert.equal(generated.form_team_schema[0].field_key, 'xiang_mu_ming_cheng')
+  field.field_key = ''
   let count = 0
   const payload = await buildFormPayload(draft, async (label) => { ++count; assert.equal(label, '项目名称'); return 'project_name' })
   assert.equal(payload.form_team_schema[0].field_key, 'project_name')
   field.label = '项目标题'
   await buildFormPayload(draft, () => assert.fail('已有 key 不重建'))
   assert.equal(count, 1)
+})
+
+test('拼音 key 无声调，保留英文数字，ü 使用 v；空题干和纯标点给出提示', async () => {
+  assert.equal(await generateFieldKey('联系电话'), 'lian_xi_dian_hua')
+  assert.equal(await generateFieldKey('Team Name 2026'), 'team_name_2026')
+  assert.equal(await generateFieldKey('女生'), 'nv_sheng')
+  assert.equal(await generateFieldKey('2026'), 'field_2026')
+  await assert.rejects(generateFieldKey('  '), /题干不能为空/)
+  await assert.rejects(generateFieldKey('？！'), /至少包含/)
+})
+
+test('重复或同音题目自动防重；保留后面的已有 key；两个 schema 独立', async () => {
+  const draft = createTemplateDraft()
+  draft.form_team_schema = ['联系方式', '联系方式'].map((label) => ({ ...newQuestion(), label }))
+  draft.form_team_schema.push({ field_key: 'lian_xi_fang_shi', label: '原联系方式', type: 'text', required: false })
+  draft.form_member_schema.push({ ...newQuestion(), label: '联系方式' })
+  const payload = await buildFormPayload(draft)
+  assert.deepEqual(payload.form_team_schema.map((field) => field.field_key), ['lian_xi_fang_shi_2', 'lian_xi_fang_shi_3', 'lian_xi_fang_shi'])
+  assert.equal(payload.form_member_schema.at(-1).field_key, 'lian_xi_fang_shi')
+  assert.deepEqual(await buildFormPayload(draft), payload)
+  const member = createTemplateDraft()
+  member.form_member_schema.unshift({ ...newQuestion(), label: 'name' })
+  assert.equal((await buildFormPayload(member)).form_member_schema[0].field_key, 'name_2')
 })
 
 test('模板题干不能为空，同一 schema key 唯一；两个 schema 互不干扰', async () => {

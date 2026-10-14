@@ -5,7 +5,7 @@ import RegistrationDomain from '../../src/domain/RegistrationDomain.vue'
 const domain = ref(null)
 const role = ref('organizer')
 const session = ref({ token: 'fixture-token', role: 'organizer', id: 10 })
-const missingContract = ref(false)
+const invalidDetail = ref(false)
 const rejectSubmit = ref(false)
 const rejectCancel = ref(false)
 const hasRegistrations = ref(false)
@@ -66,20 +66,21 @@ window.fetch = async (url, options = {}) => {
       cancelled.value = true
       return reply(null)
     }
-    // The detail response shape is deliberately NOT specified by the test.
-    // An explicit test-only adapter below uses known sample data in memory.
-    return reply(null)
+    // Exact response shape implemented by backend/registrations.py.
+    return reply({
+      registration_id: Number(parsed.pathname.split('/').pop()), activity_id: 1, form_id: form.value.form_id,
+      activity_name: '软件创新大赛', activity_status: 'published', registered_at: '2026-10-01T14:00:00',
+      my_role: parsed.pathname.endsWith('/1') ? 'captain' : 'member',
+      form: invalidDetail.value ? null : {
+        form_team_schema: form.value.form_team_schema, form_member_schema: form.value.form_member_schema,
+        min_team_member: form.value.min_team_member, max_team_member: form.value.max_team_member
+      },
+      extra_fields: extra
+    })
   }
   return reply(null, 404, '资源不存在')
 }
 
-// Only sample labels/keys already given by the user; not a proposed generation rule.
-const fixtureGenerator = (label) => {
-  const key = { '项目名称': 'project_name', '项目简介': 'project_intro', '专业': 'major' }[label]
-  if (!key) throw new Error('测试仅使用文档题干示例')
-  return key
-}
-const fixtureDetailReader = () => ({ teamSchema: form.value.form_team_schema, memberSchema: form.value.form_member_schema, teamExtra: extra.team_extra, members: extra.members, isIndividual: false })
 async function switchRole(value) {
   role.value = value
   session.value = { token: 'fixture-token', role: value, id: value === 'organizer' ? 10 : 100 }
@@ -93,13 +94,13 @@ async function switchRole(value) {
     <div>
       <el-button @click="switchRole('organizer')">发布者测试</el-button>
       <el-button @click="switchRole('student')">学生测试</el-button>
-      <el-checkbox v-model="missingContract">缺失契约</el-checkbox>
+      <el-checkbox v-model="invalidDetail">详情响应异常</el-checkbox>
       <el-checkbox v-model="rejectSubmit">报名失败</el-checkbox>
       <el-checkbox v-model="rejectCancel">取消拒绝</el-checkbox>
       <el-checkbox v-model="hasRegistrations">已有报名</el-checkbox>
     </div>
   </aside>
-  <RegistrationDomain ref="domain" :session="session" :generate-field-key="missingContract ? undefined : fixtureGenerator" :read-registration-detail="missingContract ? undefined : fixtureDetailReader">
+  <RegistrationDomain ref="domain" :session="session">
     <template #home="actions">
       <div class="domain-home">
         <template v-if="role === 'organizer'">
