@@ -73,8 +73,8 @@ const load = async () => {
     if (query.keyword) p.append('keyword', query.keyword)
     if (query.status) p.append('status', query.status)
     const d = await (await fetch(`${API}/api/activities?${p}`)).json()
-    rows.value = d.items || []
-    total.value = d.total
+    rows.value = d.data?.items || []
+    total.value = d.data?.total || 0
   } finally {
     loading.value = false
   }

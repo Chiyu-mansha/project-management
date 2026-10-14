@@ -8,9 +8,10 @@
 """
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel
 
+from common import fail, ok
 from database import get_conn, dict_row
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
@@ -69,7 +70,7 @@ def create_activity(body: ActIn):
     conn.commit()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (cur.lastrowid,)).fetchone()
     conn.close()
-    return dict_row(row)
+    return ok(dict_row(row))
 
 
 @router.get("")
@@ -105,7 +106,7 @@ def list_activities(
         params + [page_size, offset],
     ).fetchall()
     conn.close()
-    return {"items": [dict_row(r) for r in rows], "total": total}
+    return ok({"items": [dict_row(r) for r in rows], "total": total})
 
 
 @router.get("/{activity_id}")
@@ -114,8 +115,8 @@ def get_activity(activity_id: int):
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
     conn.close()
     if row is None:
-        raise HTTPException(status_code=404, detail="活动不存在")
-    return dict_row(row)
+        fail(404, "活动不存在")
+    return ok(dict_row(row))
 
 
 @router.put("/{activity_id}")
@@ -125,12 +126,12 @@ def update_activity(activity_id: int, body: ActIn):
     cur = conn.execute("SELECT status FROM activities WHERE id=?", (activity_id,)).fetchone()
     if cur is None:
         conn.close()
-        raise HTTPException(status_code=404, detail="活动不存在")
+        fail(404, "活动不存在")
     # 状态机校验：只能按 draft -> published -> ongoing -> finished 前进，cancelled 为终态
     old = cur["status"] or "draft"
     if body.status not in ALLOWED.get(old, {old}):
         conn.close()
-        raise HTTPException(status_code=400, detail=f"状态不能从 {old} 变为 {body.status}")
+        fail(400, f"状态不能从 {old} 变为 {body.status}")
     conn.execute(
         f"""UPDATE activities SET
             title=?, type=?, organizer_id=?, start_time=?, end_time=?, location=?,
@@ -147,4 +148,4 @@ def update_activity(activity_id: int, body: ActIn):
     conn.commit()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
     conn.close()
-    return dict_row(row)
+    return ok(dict_row(row))

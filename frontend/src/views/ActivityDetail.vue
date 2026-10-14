@@ -51,7 +51,7 @@ const statusType = (s) => STATUS[s]?.type || 'info'
 
 onMounted(async () => {
   const d = await (await fetch(`${API}/api/activities/${route.params.id}`)).json()
-  act.value = d
+  act.value = d.data
 })
 </script>
 

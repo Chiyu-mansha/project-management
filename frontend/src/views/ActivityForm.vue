@@ -103,8 +103,8 @@ const form = reactive({
 onMounted(async () => {
   if (isEdit.value) {
     const d = await (await fetch(`${API}/api/activities/${route.params.id}`)).json()
-    origStatus.value = d.status || 'draft'
-    Object.assign(form, d)
+    origStatus.value = d.data?.status || 'draft'
+    Object.assign(form, d.data)
   }
 })
 
@@ -119,7 +119,7 @@ const save = async () => {
     const r = await fetch(url, { method: isEdit.value ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
     if (!r.ok) {
       const e = await r.json().catch(() => ({}))
-      return ElMessage.error(e.detail || '保存失败')
+      return ElMessage.error(e.message || '保存失败')
     }
     ElMessage.success(isEdit.value ? '已保存' : '发布成功')
     router.push('/activities')
