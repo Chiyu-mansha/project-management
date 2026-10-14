@@ -6,6 +6,10 @@ from typing import Optional
 from database import get_conn, dict_row
 from .llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
 
+
+def _now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 
 
@@ -122,7 +126,7 @@ def feedback(body: FeedbackIn):
     conn = get_conn()
     changed = False
     if body.action == "dislike" and body.faq_id:
-        conn.execute("UPDATE faqs SET status='draft' WHERE id=?", (body.faq_id,))
+        conn.execute("UPDATE faqs SET status='draft',updated_at=? WHERE id=?", (_now(), body.faq_id,))
         conn.commit(); changed = True
     conn.close()
     return {"ok": True, "faq_downgraded": changed}
@@ -133,8 +137,8 @@ def accept(body: AcceptIn):
     """把候选问答沉淀为 FAQ 草稿，等管理员审核。source=auto, status=draft。"""
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title) VALUES(?,?,?,?,?,?,?)",
-        (body.activity_id, body.question, body.answer, body.category, "auto", "draft", "高频提问"),
+        "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        (body.activity_id, body.question, body.answer, body.category, "auto", "draft", "高频提问", _now()),
     )
     conn.commit()
     nid = cur.lastrowid

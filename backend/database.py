@@ -28,6 +28,8 @@ def init_db():
         conn.execute("ALTER TABLE faqs ADD COLUMN status TEXT DEFAULT 'published'")
     if "origin_title" not in cols:
         conn.execute("ALTER TABLE faqs ADD COLUMN origin_title TEXT DEFAULT ''")
+    if "updated_at" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN updated_at TEXT")
     # 答疑日志表：用于统计高频提问、自动沉淀候选（本地新增，不动共享 schema）
     conn.execute(
         """CREATE TABLE IF NOT EXISTS qa_logs (

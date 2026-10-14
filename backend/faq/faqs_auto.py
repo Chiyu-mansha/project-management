@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter
 from pydantic import BaseModel
 from typing import Optional
@@ -26,14 +27,15 @@ def auto_generate(body: AutoGenIn):
     else:
         conn.execute("DELETE FROM faqs WHERE activity_id IS NULL AND source='auto' AND status='draft'")
     saved = []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for it in items[:5]:
         q = str(it.get("question", "")).strip()
         a = str(it.get("answer", "")).strip()
         if not q or not a:
             continue
         cur = conn.execute(
-            "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title) VALUES(?,?,?,?,?,?,?)",
-            (body.activity_id, q, a, body.category, "auto", "draft", body.title),
+            "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (body.activity_id, q, a, body.category, "auto", "draft", body.title, now),
         )
         saved.append(cur.lastrowid)
     conn.commit()

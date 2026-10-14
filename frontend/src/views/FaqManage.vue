@@ -37,6 +37,7 @@
       <el-table-column prop="status" label="状态" width="90">
         <template #default="s"><el-tag :type="s.row.status==='draft'?'danger':'success'">{{ s.row.status==='draft'?'待审核':'已发布' }}</el-tag></template>
       </el-table-column>
+      <el-table-column prop="updated_at" label="更新时间" width="155" show-overflow-tooltip />
       <el-table-column label="操作" width="170">
         <template #default="s">
           <div class="ops">
