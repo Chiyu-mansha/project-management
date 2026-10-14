@@ -37,7 +37,7 @@ npm run dev
 ```
 backend/
   main.py          # FastAPI 入口(含 CORS、/api/hello)
-  schema.sql       # 五张核心表建表语句
+  schema.sql       # 九张表建表语句(与飞书《数据库 Schema v1.1》一致)
   requirements.txt
 frontend/
   src/App.vue      # 报名模块入口

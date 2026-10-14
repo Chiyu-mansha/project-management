@@ -1,6 +1,7 @@
-"""报名管理后端入口。
+"""校园活动智能通知&报名助理 后端入口。
 
-启动：uvicorn main:app --reload --port 8000
+POD-1 活动/FAQ/答疑 + POD-2 报名管理(PM 合并仪式集成)。
+启动:uvicorn main:app --reload --port 8000
 """
 from __future__ import annotations
 
@@ -12,6 +13,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from database import init_db as init_db_pod1
+from activity import activity_router
+from faq import faqs_router, faqs_auto_router, qa_router
 
 import db
 from common import ok
@@ -25,7 +30,7 @@ try:
 except ImportError:  # pragma: no cover
     pass
 
-app = FastAPI(title="校园活动智能通知&报名助理 - 报名管理")
+app = FastAPI(title="校园活动智能通知&报名助理")
 
 # 开发阶段全放开，部署时收紧
 app.add_middleware(
@@ -35,6 +40,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---- POD-1:活动域 + FAQ/答疑 ----
+init_db_pod1()
+app.include_router(activity_router)
+app.include_router(faqs_router)
+app.include_router(faqs_auto_router)
+app.include_router(qa_router)
+
+# ---- POD-2:报名域(POD-1 正式活动接口已合入,原 activities_stub 按注释删除) ----
 app.include_router(forms_router)
 app.include_router(registrations_router)
 
@@ -73,7 +86,7 @@ class DevTokenBody(BaseModel):
 
 @app.post("/api/dev/token")
 def dev_token(body: DevTokenBody):
-    """开发环境专用：按 role+id 生成临时 token（production 禁用）。"""
+    """开发环境专用:按 role+id 生成临时 token(production 禁用)。"""
     if os.getenv("APP_ENV", "development").lower() == "production":
         raise HTTPException(404, detail={"code": 404, "message": "资源不存在"})
     role = body.role.lower()
