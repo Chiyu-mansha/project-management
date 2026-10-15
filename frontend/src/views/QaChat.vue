@@ -160,7 +160,7 @@ const ask = async () => {
   if (!qa.question.trim()) return ElMessage.warning('先输入问题')
   const question = qa.question.trim(); loading.value = true
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 15000)
+  const timer = setTimeout(() => ctrl.abort(), 90000)
   try {
     const answer = await fetchAsk(question, false, ctrl.signal)
     messages.value.push({ question, ...answer, feedback: null })

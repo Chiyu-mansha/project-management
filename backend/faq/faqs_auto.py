@@ -113,15 +113,37 @@ def from_activity(body: FromActivityIn):
         raise HTTPException(404, "活动不存在")
     a = dict_row(act)
     title = a.get("title", "")
+    # 发布者名称（organizer_id → organizers.name；老库可能只有 organizer 文本，回退用）
+    org_name = a.get("organizer") or ""
+    if a.get("organizer_id"):
+        orow = conn.execute("SELECT name, organization FROM organizers WHERE id=?", (a.get("organizer_id"),)).fetchone()
+        if orow:
+            org_name = " · ".join([x for x in (orow["organization"], orow["name"]) if x])
+    # 综测/操行/创新分拼成一句，便于 AI 提取加分问答；老库 zongce_score 文本兜底
+    scores = []
+    if a.get("comprehensive_score"):
+        scores.append("可加综合素养积分")
+    if a.get("conduct_score") is not None and a.get("conduct_score") != "":
+        scores.append(f"操行分 {a.get('conduct_score')}")
+    if a.get("innovation_score") is not None and a.get("innovation_score") != "":
+        scores.append(f"创新分 {a.get('innovation_score')}")
+    if not scores and a.get("zongce_score"):
+        scores.append(str(a.get("zongce_score")))
     content = "\n".join([
         f"标题：{a.get('title','')}",
         f"类型：{a.get('type','')}",
-        f"时间：{a.get('start_time','')} ~ {a.get('end_time','')}",
+        f"标签：{a.get('tags','')}",
+        f"主办方：{org_name}",
+        f"开始时间：{a.get('start_time','')}",
+        f"结束时间：{a.get('end_time','')}",
         f"地点：{a.get('location','')}",
         f"报名截止：{a.get('signup_deadline','')}",
-        f"组队：{a.get('min_team_member','')}~{a.get('max_team_member','')}人",
-        f"简介：{a.get('description','')}",
-        f"要求：{a.get('requirements','')}",
+        f"组队人数：{a.get('min_team_member','')}~{a.get('max_team_member','')} 人",
+        f"报名上限：{a.get('max_participants','') or '不限'}",
+        f"是否发电子票：{'是' if a.get('has_ticket') else '否'}",
+        f"综测加分：{'；'.join(scores) if scores else '无'}",
+        f"活动简介：{a.get('description','')}",
+        f"报名条件：{a.get('requirements','')}",
     ])
     items = extract_faq(title, content, count=max(3, min(5, body.count or 5)))
     saved, skipped = _save_items(conn, body.activity_id, items, body.category, title)

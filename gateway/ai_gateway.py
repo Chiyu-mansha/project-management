@@ -62,7 +62,7 @@ def _chat_completion(prompt: str, system: str = "") -> str:
         f"{BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
         json={"model": MODEL, "messages": messages},
-        timeout=10,
+        timeout=60,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
@@ -114,9 +114,10 @@ def extract_faq(title: str, content: str, count: int = 3) -> list:
     if USE_REAL_LLM:
         try:
             prompt = (
-                f"活动标题：{title}\n推文内容：{content[:2000]}\n"
-                f"请提取 {count} 个同学最可能问的问题，只返回 JSON 数组，"
-                '格式：[{"question":"...","answer":"..."}]'
+                f"以下是活动信息：\n{title}\n{content[:2000]}\n\n"
+                f"请根据以上信息，提取 {count} 个同学最可能问的问题，并给出准确、具体的答案"
+                f"（答案必须来自上面的活动信息，不要编造；信息里没有的就答“请咨询主办方”）。"
+                "只返回 JSON 数组，格式：[{\"question\":\"...\",\"answer\":\"...\"}]"
             )
             raw = _chat_completion(prompt, system=SYSTEM_EDITOR)
             # 清洗 markdown 代码块标记
