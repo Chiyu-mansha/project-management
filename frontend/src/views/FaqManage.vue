@@ -15,6 +15,7 @@
       <el-button type="danger" @click="clearQuery">一键清空</el-button>
       <el-button type="success" @click="openAdd">+ 新增 FAQ</el-button>
       <el-button type="warning" @click="genDlg = true">✨ 推文AI提取</el-button>
+      <el-button type="info" plain @click="impDlg = true">📥 活动一键导入</el-button>
       <el-button type="primary" plain @click="openCandidates">🔥 高频待沉淀</el-button>
       <span class="total">共 {{ total }} 条</span>
     </div>
@@ -37,6 +38,7 @@
       <el-table-column prop="status" label="状态" width="90">
         <template #default="s"><el-tag :type="s.row.status==='draft'?'danger':'success'">{{ s.row.status==='draft'?'待审核':'已发布' }}</el-tag></template>
       </el-table-column>
+      <el-table-column prop="updated_at" label="更新时间" width="155" show-overflow-tooltip />
       <el-table-column label="操作" width="170">
         <template #default="s">
           <div class="ops">
@@ -72,6 +74,16 @@
         <el-form-item label="推文内容"><el-input v-model="genForm.content" type="textarea" :rows="6" placeholder="粘贴推文正文…" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="genDlg=false">取消</el-button><el-button type="warning" :loading="genLoading" @click="autoGen">AI 提取</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="impDlg" title="📥 活动一键导入 FAQ" width="480px">
+      <p style="color:#888;margin-top:0">按活动详情自动提取 3-5 条问答，以 <b>待审核(draft)</b> 存入。<b>同一活动的相同问题不会重复导入</b>，已导入过的活动会提示。</p>
+      <el-form label-width="70px">
+        <el-form-item label="活动"><el-select v-model="impForm.activity_id" placeholder="选择活动" filterable style="width:100%" @change="checkImported"><el-option v-for="a in activities" :key="a.id" :label="a.title" :value="a.id" /></el-select></el-form-item>
+        <el-form-item label="分类"><el-select v-model="impForm.category" style="width:100%"><el-option v-for="c in CATS" :key="c" :label="c" :value="c" /></el-select></el-form-item>
+        <el-alert v-if="impStatus && impStatus.imported" type="warning" :closable="false" show-icon title="该活动已导入过" :description="`待审核草稿 ${impStatus.auto_draft} 条，已发布 ${impStatus.published} 条；重复问题会自动跳过。`" />
+      </el-form>
+      <template #footer><el-button @click="impDlg=false">取消</el-button><el-button type="primary" :loading="impLoading" :disabled="!impForm.activity_id" @click="importFromActivity">一键导入</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="candDlg" title="🔥 高频提问待沉淀" width="720px">
@@ -158,13 +170,31 @@ const autoGen = async () => {
     }
     if (genForm.activity_id === '') genForm.activity_id = null
     const d = await (await fetch(`${API}/api/faqs/auto-generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(genForm) })).json()
-    ElMessage.success(`AI提取${d.total}条，已存为待审核`)
+    if (d.total === 0) ElMessage.warning(`没有新增（跳过重复 ${d.skipped || 0} 条）`)
+    else ElMessage.success(`AI提取${d.total}条${d.skipped ? `，跳过重复${d.skipped}条` : ''}，已存为待审核`)
     genDlg.value = false; query.status = 'draft'; load()
   } finally { genLoading.value = false }
 }
 const approve = async (r) => {
   await fetch(`${API}/api/faqs/${r.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...r, status: 'published' }) })
   ElMessage.success('已发布'); load()
+}
+const impDlg = ref(false); const impLoading = ref(false); const impStatus = ref(null)
+const impForm = reactive({ activity_id: null, category: '通知类' })
+const checkImported = async () => {
+  impStatus.value = null
+  if (!impForm.activity_id) return
+  try { impStatus.value = await (await fetch(`${API}/api/faqs/import-status?activity_id=${impForm.activity_id}`)).json() } catch {}
+}
+const importFromActivity = async () => {
+  if (!impForm.activity_id) return ElMessage.warning('先选择活动')
+  impLoading.value = true
+  try {
+    const d = await (await fetch(`${API}/api/faqs/from-activity`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(impForm) })).json()
+    if (d.total === 0) ElMessage.warning(`没有新增（跳过重复 ${d.skipped || 0} 条），该活动已导入过`)
+    else ElMessage.success(`导入${d.total}条${d.skipped ? `，跳过重复${d.skipped}条` : ''}，已存为待审核`)
+    impDlg.value = false; query.status = 'draft'; load()
+  } finally { impLoading.value = false }
 }
 const candDlg = ref(false); const candidates = ref([]); const candLoading = ref(false); const candMin = ref(3)
 const openCandidates = () => { candDlg.value = true; loadCandidates() }
