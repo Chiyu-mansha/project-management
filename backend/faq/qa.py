@@ -40,6 +40,14 @@ def _norm(q: str) -> str:
     return q
 
 
+def _overlap(a: str, b: str) -> float:
+    """归一化字面重合度：交集字符数 / 较长者长度，用于双条件判重的第二道门槛。"""
+    if not a or not b:
+        return 0.0
+    sa, sb = set(a), set(b)
+    return len(sa & sb) / max(len(sa), len(sb))
+
+
 @router.post("/ask")
 def ask(body: AskIn):
     q = (body.question or "").strip()
@@ -62,10 +70,21 @@ def ask(body: AskIn):
                     (f"%{q}%", q),
                 ).fetchone()
         else:
-            row = conn.execute(
-                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
+            # 全局搜索：LIKE 可能命中多条（如“蜜雪冰城开门时间”命中“食堂开门时间”），
+            # 按归一化字面重合度排序，低于 0.5 宁可走网关也不硬返回，避免串台。
+            rows = conn.execute(
+                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 10",
                 (f"%{q}%", q),
-            ).fetchone()
+            ).fetchall()
+            if rows:
+                nq = _norm(q)
+                scored = sorted(
+                    (dict_row(r) for r in rows),
+                    key=lambda d: _overlap(nq, _norm(d.get("question", ""))),
+                    reverse=True,
+                )
+                if _overlap(nq, _norm(scored[0].get("question", ""))) >= 0.5:
+                    row = next((r for r in rows if dict_row(r)["id"] == scored[0]["id"]), None)
     if row:
         d = dict_row(row)
         _log(conn, body.activity_id, q, d["answer"], "faq")

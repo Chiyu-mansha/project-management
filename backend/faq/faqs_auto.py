@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
-from .llm_gateway import extract_faq
+from .llm_gateway import extract_faq, USE_REAL_LLM, similar_question as gw_similar
 
 router = APIRouter(prefix="/api/faqs", tags=["faqs-auto"])
 
@@ -15,12 +15,25 @@ def _norm(q: str) -> str:
     return q
 
 
+def _overlap(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    sa, sb = set(a), set(b)
+    return len(sa & sb) / max(len(sa), len(sb))
+
+
 def _save_items(conn, activity_id, items, category, origin_title):
-    """写入前三层去重：空值跳过；库里已有同归一化问题跳过；本批内重复跳过。"""
-    existing = {_norm(r[0]) for r in conn.execute(
+    """写入前去重：空值跳过；精确比对跳过；双条件（模型同义+字面重合>=0.6）才拦。
+
+    保守方向与高频合并相反：提取是写入侧，误拦会无声丢失，所以模型单方面说同义不算数；
+    且只和同活动/同全局范围比，不跨活动误杀（如“蜜雪冰城”不拦“食堂”）。
+    """
+    lib = conn.execute(
         "SELECT question FROM faqs WHERE (activity_id IS ? OR activity_id = ?) OR activity_id IS NULL",
         (activity_id, activity_id),
-    ).fetchall()}
+    ).fetchall()
+    lib_norm = [(_norm(r[0]), r[0]) for r in lib]
+    lib_set = {n for n, _ in lib_norm}
     seen, saved = set(), []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     skipped = 0
@@ -30,10 +43,28 @@ def _save_items(conn, activity_id, items, category, origin_title):
         if not q or not a:
             continue
         key = _norm(q)
-        if not key or key in existing or key in seen:
+        if not key or key in lib_set or key in seen:
+            skipped += 1
+            continue
+        # 同范围候选：全局新问题只和全局比，有活动的只和同活动+全局比
+        dup = False
+        if USE_REAL_LLM and lib_norm:
+            scope = [(n, raw) for n, raw in lib_norm if True][:20]
+            try:
+                idx = gw_similar(q, [raw for _, raw in scope])
+                if isinstance(idx, int) and 0 <= idx < len(scope):
+                    n0, _ = scope[idx]
+                    same_scope = True  # scope 已限定同范围，直接用
+                    if same_scope and _overlap(key, n0) >= 0.6:
+                        dup = True
+            except Exception:
+                dup = False
+        if dup:
             skipped += 1
             continue
         seen.add(key)
+        lib_set.add(key)
+        lib_norm.append((key, q))
         cur = conn.execute(
             "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title,updated_at) VALUES(?,?,?,?,?,?,?,?)",
             (activity_id, q, a, category, "auto", "draft", origin_title, now),
