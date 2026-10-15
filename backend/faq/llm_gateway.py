@@ -13,7 +13,7 @@ load_dotenv()
 
 GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8100").rstrip("/")
 USE_REAL_LLM = os.getenv("USE_REAL_LLM") == "1"
-TIMEOUT = 20
+TIMEOUT = 12
 
 
 def _post(path: str, payload: dict) -> dict:

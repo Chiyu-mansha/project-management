@@ -90,12 +90,31 @@ def ask(body: AskIn):
         _log(conn, body.activity_id, q, d["answer"], "faq")
         conn.commit(); conn.close()
         return {"answer": d["answer"], "source": "faq", "faq_id": d["id"]}
-    # 2. 未命中 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
+    # 2. 未命中 → 先看 7 天内同样归一化问题有没有 llm 缓存，有直接复用，不调网关
+    nq = _norm(q)
+    if not body.no_cache:
+        # 归一化比对：日志存的是原问题，逐条归一化后比；同活动/同全局范围
+        logs = conn.execute(
+            """SELECT question, answer FROM qa_logs WHERE source='llm'
+               AND ((activity_id IS ? AND ? IS NULL) OR activity_id = ?)
+               AND created_at >= datetime('now','-7 days') ORDER BY id DESC LIMIT 50""",
+            (body.activity_id, body.activity_id, body.activity_id),
+        ).fetchall()
+        cached = None
+        for lq, la in logs:
+            if _norm(lq) == nq and la:
+                cached = la
+                break
+        if cached:
+            _log(conn, body.activity_id, q, cached, "llm")
+            conn.commit(); conn.close()
+            return {"answer": cached, "source": "llm", "faq_id": None, "cached": True}
+    # 3. 无缓存 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
     result = chat(q, body.activity_id)
     answer = result["answer"]
     _log(conn, body.activity_id, q, answer, "llm")
     conn.commit(); conn.close()
-    return {"answer": answer, "source": "llm", "faq_id": None}
+    return {"answer": answer, "source": "llm", "faq_id": None, "cached": False}
 
 
 def _log(conn, activity_id, question, answer, source):
@@ -127,6 +146,7 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
     # 开启真实网关时，再用 AI 做同义词合并（把不同问法归为一类）
     # 保守策略：循环逐个比对；网关异常/返回-1/格式不对一律不并（宁可漏，不错并）；
     # 只合并同一活动（activity_id 相等）的组，不跨活动归并。
+    # 同义结果缓存一天：同一组问题串拼成 key，命中直接用，不调网关。
     if USE_REAL_LLM and len(basics) > 1:
         merged = []
         for g in basics:
@@ -134,7 +154,20 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
             try:
                 cands = [m["question"] for m in merged]
                 if cands:
-                    idx = gw_similar(g["question"], cands)
+                    cache_key = "SIM:" + _norm(g["question"]) + "||" + "||".join(sorted(_norm(c) for c in cands))
+                    row = conn.execute(
+                        "SELECT answer FROM qa_logs WHERE source='sim_cache' AND question=? AND created_at >= datetime('now','-1 day')",
+                        (cache_key,),
+                    ).fetchone()
+                    if row:
+                        idx = int(row[0])
+                    else:
+                        idx = gw_similar(g["question"], cands)
+                        conn.execute(
+                            "INSERT INTO qa_logs(activity_id,question,answer,source,count,created_at) VALUES(NULL,?,?,'sim_cache',1,?)",
+                            (cache_key, str(idx), datetime.now().isoformat(timespec="seconds")),
+                        )
+                        conn.commit()
                     if isinstance(idx, int) and 0 <= idx < len(merged):
                         if merged[idx]["activity_id"] == g["activity_id"]:
                             hit = idx

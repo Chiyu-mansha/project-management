@@ -62,7 +62,7 @@ def _chat_completion(prompt: str, system: str = "") -> str:
         f"{BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
         json={"model": MODEL, "messages": messages},
-        timeout=15,
+        timeout=10,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
