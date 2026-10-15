@@ -27,11 +27,12 @@
 import json
 import os
 import re
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
 BASE_URL = os.getenv(

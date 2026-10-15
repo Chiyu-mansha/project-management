@@ -106,12 +106,23 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
     # 规则归一化先聚一轮（快）
     basics = list(groups.values())
     # 开启真实网关时，再用 AI 做同义词合并（把不同问法归为一类）
+    # 保守策略：循环逐个比对；网关异常/返回-1/格式不对一律不并（宁可漏，不错并）；
+    # 只合并同一活动（activity_id 相等）的组，不跨活动归并。
     if USE_REAL_LLM and len(basics) > 1:
         merged = []
         for g in basics:
-            idx = gw_similar(g["question"], [m["question"] for m in merged])
-            if idx >= 0:
-                merged[idx]["count"] += g["count"]
+            hit = -1
+            try:
+                cands = [m["question"] for m in merged]
+                if cands:
+                    idx = gw_similar(g["question"], cands)
+                    if isinstance(idx, int) and 0 <= idx < len(merged):
+                        if merged[idx]["activity_id"] == g["activity_id"]:
+                            hit = idx
+            except Exception:
+                hit = -1
+            if hit >= 0:
+                merged[hit]["count"] += g["count"]
             else:
                 merged.append(g)
         basics = merged
