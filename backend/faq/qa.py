@@ -140,9 +140,9 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
         g = groups.setdefault(key, {"question": r["question"], "answer": r["answer"], "activity_id": r["activity_id"], "count": 0})
         g["count"] += 1
         g["answer"] = r["answer"] or g["answer"]
-    conn.close()
     # 规则归一化先聚一轮（快）
     basics = list(groups.values())
+    # 连接要留到合并块之后（合并要用它读写 sim_cache），不能提前 close
     # 开启真实网关时，再用 AI 做同义词合并（把不同问法归为一类）
     # 保守策略：循环逐个比对；网关异常/返回-1/格式不对一律不并（宁可漏，不错并）；
     # 只合并同一活动（activity_id 相等）的组，不跨活动归并。
@@ -178,6 +178,7 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
             else:
                 merged.append(g)
         basics = merged
+    conn.close()
     out = [g for g in basics if _norm(g["question"]) not in faq_norm and g["count"] >= min_count]
     out.sort(key=lambda x: -x["count"])
     return {"items": out, "total": len(out), "min_count": min_count}
