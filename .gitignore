@@ -11,3 +11,4 @@ __pycache__/
 
 # 密钥
 .env
+.venv/

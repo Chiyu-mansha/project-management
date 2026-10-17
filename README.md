@@ -28,21 +28,20 @@ npm install
 npm run dev
 ```
 
-打开 http://localhost:5173 查看报名模块入口。POD-2 报名前端按文档提供弹窗和列表组件，由 POD-1 的活动页面传入活动 ID、由认证域传入登录状态，接入方式见 [frontend/INTEGRATION.md](frontend/INTEGRATION.md)。当前后端仍只有 `/api/hello`，报名业务接口尚需后端成员提供。
+打开 http://localhost:5173 查看报名模块入口。活动页传入活动 ID，认证域传入登录状态，接入方法见 [frontend/INTEGRATION.md](frontend/INTEGRATION.md)。新增题目自带拼音 key 生成，报名详情自带后端响应适配。
 
-前端校验：`npm test`；生产构建：`npm run build`。
+前端验证：`npm test`；生产构建：`npm run build`。活动详情接口由 POD-1 提供，演示页、临时活动桩及演示种子脚本已清理。
 
 ## 目录结构
 
 ```
 backend/
   main.py          # FastAPI 入口(含 CORS、/api/hello)
-  schema.sql       # 五张核心表建表语句
+  schema.sql       # 九张表建表语句(与飞书《数据库 Schema v1.1》一致)
   requirements.txt
 frontend/
-  src/App.vue      # 入口页面
-  src/api/         # 文档约定的报名请求与 Bearer token
-  src/domain/      # POD-2 报名组件及供 POD-1 调用的函数
+  src/App.vue      # 报名模块入口
+  src/domain/      # POD-2 报名组件、拼音 key 生成及详情适配
 ```
 
 ## 分支规则
