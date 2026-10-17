@@ -37,7 +37,7 @@ npm run dev
 ```
 backend/
   main.py          # FastAPI 入口(含 CORS、/api/hello)
-  schema.sql       # 九张表建表语句(与飞书《数据库 Schema v1.1》一致)
+  schema.sql       # 十张表建表语句(与飞书《数据库 Schema v1.3》一致)
   requirements.txt
 frontend/
   src/App.vue      # 报名模块入口
@@ -53,3 +53,12 @@ frontend/
 ## AI 能力
 
 统一走 AI 网关(技术负责人封装),各 POD 只调网关、不直连大模型。Key 放本地 `.env`,禁止提交仓库(见 backend/.env.example)。
+
+## POD-2 联调 review（2026-10-17）
+
+- [改动清单与验证结果](docs/POD2_REVIEW.md)
+- [八个报名接口的 JSON、校验与状态码](docs/POD2_API.md)
+- [POD-1 真实入口函数与待确认提案](docs/POD2_HANDOFF.md)
+- [周报草稿](docs/POD2_WEEKLY_2026-10-17.md)
+
+后端回归使用临时 SQLite，不读取或清空业务库：安装 `backend/requirements-dev.txt` 后在仓库根目录运行 `python -m unittest discover -s backend/tests -v`。前端运行 `npm test` 与 `npm run build`。Windows 沙箱若阻止 asyncio 的本地 socketpair，需要在正常终端运行后端 HTTP 测试。

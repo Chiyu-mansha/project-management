@@ -47,6 +47,31 @@ test('未登录不发出请求', async () => {
   assert.equal(sent, false)
 })
 
+test('POD-1 活动详情兼容实际裸 JSON 和将来的统一壳，报名接口仍严格验壳', async () => {
+  const activity = { id: 7, status: 'published', min_team_member: 2, max_team_member: 4 }
+  for (const body of [activity, { code: 0, data: activity }]) {
+    const api = createRegistrationApi(createApiClient({
+      getToken: () => 'token',
+      fetchImpl: async () => new Response(JSON.stringify(body), { status: 200 })
+    }))
+    assert.deepEqual(await api.getActivity(7), activity)
+  }
+  const api = createRegistrationApi(createApiClient({
+    getToken: () => 'token', fetchImpl: async () => new Response(JSON.stringify(activity), { status: 200 })
+  }))
+  await assert.rejects(api.getForm(7), /请求失败/)
+})
+
+test('活动详情裸响应适配不能绕过 HTTP 错误或业务错误', async () => {
+  for (const [body, status] of [[{ message: '活动不存在' }, 404], [{ code: 403, message: '无权限访问' }, 200]]) {
+    const api = createRegistrationApi(createApiClient({
+      getToken: () => 'token',
+      fetchImpl: async () => new Response(JSON.stringify(body), { status })
+    }))
+    await assert.rejects(api.getActivity(7), (error) => error.message === body.message)
+  }
+})
+
 test('请求期间登录状态变化时不向新会话返回旧会话结果', async () => {
   let token = 'old-token'
   const request = createApiClient({

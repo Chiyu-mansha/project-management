@@ -20,6 +20,6 @@ export function createRegistrationApi(request) {
     getRegistration: (id, signal) => request(registrationPath(id), { signal }),
     cancelRegistration: (id, signal) => request(registrationPath(id), { method: 'DELETE', signal }),
     // Read-only POD-1 endpoint, explicitly documented in the final contract.
-    getActivity: (id, signal) => request(activityPath(id), { signal })
+    getActivity: (id, signal) => request(activityPath(id), { signal, allowBareResponse: true })
   }
 }

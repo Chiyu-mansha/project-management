@@ -63,10 +63,12 @@ def execute(sql: str, params: tuple = ()) -> int:
 
 
 @contextmanager
-def transaction():
+def transaction(*, immediate: bool = False):
     """事务：正常退出则提交，异常则回滚并重抛。"""
     conn = get_conn()
     try:
+        if immediate:
+            conn.execute("BEGIN IMMEDIATE")
         yield conn
         conn.commit()
     except Exception:

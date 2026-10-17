@@ -4,18 +4,20 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 import db
-from auth import get_current_user, require_role
+from auth import require_role
 from common import deadline_passed, fail, ok, to_iso
 from schemas import RegistrationPayload
 
 router = APIRouter(prefix="/api", tags=["registrations"])
 
 
-def _activity_or_404(activity_id: int) -> dict:
-    row = db.query_one("SELECT * FROM activities WHERE id = ?", (activity_id,))
+def _activity_or_404(activity_id: int, conn=None) -> dict:
+    sql = "SELECT * FROM activities WHERE id = ?"
+    row = (conn.execute(sql, (activity_id,)).fetchone() if conn is not None
+           else db.query_one(sql, (activity_id,)))
     if row is None:
         fail(404, "活动不存在")
     return dict(row)
@@ -24,8 +26,8 @@ def _activity_or_404(activity_id: int) -> dict:
 @router.get("/activities/{id}/registrations")
 def list_registrations(
     id: int,
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     user: dict = Depends(require_role("ORGANIZER")),
 ):
     """发布者查看该活动全部报名清单。"""
@@ -57,18 +59,29 @@ def submit_registration(
     user: dict = Depends(require_role("STUDENT")),
 ):
     """队长提交整支队伍报名，写入 registrations + registration_members。"""
-    activity = _activity_or_404(id)
+    try:
+        with db.transaction(immediate=True) as conn:
+            return _submit_registration(id, payload, user, conn)
+    except sqlite3.IntegrityError as exc:
+        if "UNIQUE constraint failed" in str(exc):
+            fail(409, "该成员已报名本活动")
+        raise
+
+
+def _submit_registration(id: int, payload: RegistrationPayload, user: dict, conn):
+    # Lock before reading capacity/status/template, not only before INSERT.
+    activity = _activity_or_404(id, conn)
 
     if activity["status"] != "published":
         fail(400, "活动未开放报名")
     if deadline_passed(activity["signup_deadline"]):
         fail(400, "报名已截止")
     if activity["max_participants"] is not None:
-        count = db.query_one("SELECT COUNT(*) AS c FROM registrations WHERE activity_id = ?", (id,))["c"]
+        count = conn.execute("SELECT COUNT(*) AS c FROM registrations WHERE activity_id = ?", (id,)).fetchone()["c"]
         if count >= activity["max_participants"]:
             fail(400, "报名已满")
 
-    form = db.query_one("SELECT * FROM forms WHERE activity_id = ?", (id,))
+    form = conn.execute("SELECT * FROM forms WHERE activity_id = ?", (id,)).fetchone()
     if form is None:
         fail(404, "该活动未创建报名表单")
     team_schema = json.loads(form["form_team_schema"] or "[]")
@@ -113,17 +126,17 @@ def submit_registration(
     # 学号有效性 → user_id
     user_ids: list[int] = []
     for sid in student_ids:
-        urow = db.query_one("SELECT id FROM users WHERE student_id = ?", (sid,))
+        urow = conn.execute("SELECT id FROM users WHERE student_id = ?", (sid,)).fetchone()
         if urow is None:
             fail(400, "该同学未注册")
         user_ids.append(urow["id"])
 
     # 重复报名：任一队员已在本活动其他报名单
     for uid in user_ids:
-        dup = db.query_one(
+        dup = conn.execute(
             "SELECT id FROM registration_members WHERE activity_id = ? AND user_id = ?",
             (id, uid),
-        )
+        ).fetchone()
         if dup:
             fail(409, "该成员已报名本活动")
 
@@ -131,22 +144,18 @@ def submit_registration(
         "team_extra": ef.team_extra,
         "members": [{"role": m.role, "member_extra": m.member_extra} for m in members],
     }
-    try:
-        with db.transaction() as conn:
-            cur = conn.execute(
-                "INSERT INTO registrations (activity_id, user_id, form_id, extra_fields) "
-                "VALUES (?, ?, ?, ?)",
-                (id, user["id"], form["id"], json.dumps(extra, ensure_ascii=False)),
-            )
-            reg_id = cur.lastrowid
-            for idx, uid in enumerate(user_ids):
-                conn.execute(
-                    "INSERT INTO registration_members (registration_id, user_id, role, activity_id) "
-                    "VALUES (?, ?, ?, ?)",
-                    (reg_id, uid, "captain" if idx == 0 else "member", id),
-                )
-    except sqlite3.IntegrityError:
-        fail(409, "该成员已报名本活动")
+    cur = conn.execute(
+        "INSERT INTO registrations (activity_id, user_id, form_id, extra_fields) "
+        "VALUES (?, ?, ?, ?)",
+        (id, user["id"], form["id"], json.dumps(extra, ensure_ascii=False)),
+    )
+    reg_id = cur.lastrowid
+    for idx, uid in enumerate(user_ids):
+        conn.execute(
+            "INSERT INTO registration_members (registration_id, user_id, role, activity_id) "
+            "VALUES (?, ?, ?, ?)",
+            (reg_id, uid, "captain" if idx == 0 else "member", id),
+        )
 
     return ok({"registration_id": reg_id})
 
@@ -154,8 +163,8 @@ def submit_registration(
 @router.get("/users/{id}/registrations")
 def my_registrations(
     id: int,
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
     user: dict = Depends(require_role("STUDENT")),
 ):
     """查看【我】报名的比赛列表（队长 + 队员身份都覆盖）。"""
@@ -227,31 +236,36 @@ def get_registration(registration_id: int, user: dict = Depends(require_role("ST
 @router.delete("/registrations/{registration_id}")
 def cancel_registration(registration_id: int, user: dict = Depends(require_role("STUDENT"))):
     """队长取消整队报名（级联删除 registration_members）。"""
-    reg = db.query_one("SELECT * FROM registrations WHERE id = ?", (registration_id,))
+    with db.transaction(immediate=True) as conn:
+        return _cancel_registration(registration_id, user, conn)
+
+
+def _cancel_registration(registration_id: int, user: dict, conn):
+    reg = conn.execute("SELECT * FROM registrations WHERE id = ?", (registration_id,)).fetchone()
     if reg is None:
         fail(404, "报名记录不存在")
     if reg["user_id"] != user["id"]:
         fail(403, "仅队长可取消报名")
 
-    activity = _activity_or_404(reg["activity_id"])
+    activity = _activity_or_404(reg["activity_id"], conn)
     if deadline_passed(activity["signup_deadline"]) or activity["status"] == "finished":
         fail(400, "活动已截止/已结束，禁止取消报名")
 
     # 已签到/已发凭证不能取消（只读 credentials 表）
     member_ids = {reg["user_id"]} | {
         r["user_id"]
-        for r in db.query_all(
+        for r in conn.execute(
             "SELECT user_id FROM registration_members WHERE registration_id = ?", (registration_id,)
-        )
+        ).fetchall()
     }
     placeholders = ",".join("?" * len(member_ids))
-    cred = db.query_one(
+    cred = conn.execute(
         f"SELECT id FROM credentials WHERE activity_id = ? AND user_id IN ({placeholders}) "
         f"AND (status IN ('issued', 'confirmed', 'signed') OR checkin_time IS NOT NULL) LIMIT 1",
         (reg["activity_id"], *member_ids),
-    )
+    ).fetchone()
     if cred:
         fail(409, "已签到或已发凭证，请线下处理")
 
-    db.execute("DELETE FROM registrations WHERE id = ?", (registration_id,))
+    conn.execute("DELETE FROM registrations WHERE id = ?", (registration_id,))
     return ok(None)

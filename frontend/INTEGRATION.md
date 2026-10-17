@@ -47,6 +47,7 @@ const registrationDomain = ref(null)
 | `openActivityRegistrations(activityId)` | 发布方查看报名列表，返回时触发 `back` |
 | `openRegistration(activityId)` | 学生在活动推文页点击报名 |
 | `openMyRegistrations()` | 当前登录学生查看自己的报名 |
+| `openRegistrationDetail(record)` | 查看“我的报名”返回的记录；record 保留 my_role |
 
 也可使用 `home` 作用域插槽装入 POD-1 的原页面。打开列表时隐藏该插槽，返回时恢复，未新增约定外的路由或活动编辑页面。
 
@@ -86,6 +87,12 @@ npm run build
 npm run dev
 ```
 
-开发 `/api` 代理到 `http://localhost:8000`；可用 `.env.example` 配置前端 API base。合并分支已实现 8 个报名接口。活动详情 `GET /api/activities/{id}` 由 POD-1 提供；本次已清理临时活动只读桩及其入口注册，单独运行 POD-2 后端时不再提供这个活动域接口。
+开发 `/api` 代理到 `http://127.0.0.1:8000`，避免 Windows 将 localhost 优先解析为 IPv6 而后端只监听 IPv4。修改配置后重启 Vite；可用 `.env.example` 配置前端 API base。合并分支已实现 8 个报名接口。活动详情 `GET /api/activities/{id}` 由 POD-1 提供；本次已清理临时活动只读桩及其入口注册，单独运行 POD-2 后端时不再提供这个活动域接口。
+
+## 2026-10-17 联调核对
+
+POD-1 当前活动详情接口返回裸 JSON，报名请求层仅对 `getActivity` 增加显式兼容；八个报名接口继续要求 code/data 外壳。HTTP 失败或非零业务 code 均不会被兼容逻辑当成成功。
+
+接口的真实 JSON、权限、HTTP 状态和数据库映射见 [报名 API 说明](../docs/POD2_API.md)；父页面接线、讨论区回复与推荐待确认提案见 [POD-1 交接稿](../docs/POD2_HANDOFF.md)。当前正式登录 session 与活动页按钮接线仍待共同接入，不能将单模块测试通过记为登录后端到端页面已完成。
 
 启动开发服务后，可访问 `/tests/browser/index.html` 查看隔离的回归验证页。身份切换、错误开关、请求记录仅用于测试，不进入生产入口。详情测试按已实现后端返回 JSON，直接使用正式默认适配器；新增题目也使用正式拼音生成器。`frontend/demo/`、`backend/activities_stub.py`、`backend/seed_demo.py` 已清理。

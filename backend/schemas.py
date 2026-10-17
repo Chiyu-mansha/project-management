@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictStr
 
 from common import fail
 
@@ -28,11 +28,11 @@ class FormPayload(BaseModel):
 
 class MemberEntry(BaseModel):
     role: Literal["captain", "member"]
-    member_extra: dict
+    member_extra: dict[str, StrictStr]
 
 
 class ExtraFields(BaseModel):
-    team_extra: dict
+    team_extra: dict[str, StrictStr]
     members: list[MemberEntry]
 
 
@@ -60,8 +60,9 @@ def _validate_schema(schema: list[FieldDef], is_member: bool) -> list[dict]:
     if is_member:
         for fixed in FIXED_MEMBER_FIELDS:
             found = next((f for f in out if f["field_key"] == fixed["field_key"]), None)
-            if found is None or found["type"] != fixed["type"] or found["required"] is not True:
-                fail(400, f"队员表单必须包含固定字段 {fixed['field_key']}（type=text、required=true）")
+            if (found is None or found["label"] != fixed["label"]
+                    or found["type"] != fixed["type"] or found["required"] is not True):
+                fail(400, f"队员表单必须包含固定字段 {fixed['field_key']}（题干固定、type=text、required=true）")
     return out
 
 

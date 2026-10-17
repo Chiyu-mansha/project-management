@@ -24,13 +24,11 @@ def to_iso(value) -> str | None:
 
 
 def deadline_passed(deadline) -> bool:
-    """报名截止时间是否已过；空值或无法解析视为未截止。"""
+    """支持 ISO 8601 的时区与小数秒；坏日期不能绕过截止校验。"""
     if not deadline:
         return False
-    s = str(deadline).strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            return datetime.now() >= datetime.strptime(s, fmt)
-        except ValueError:
-            continue
-    return False
+    try:
+        parsed = datetime.fromisoformat(str(deadline).strip().replace("Z", "+00:00"))
+    except ValueError:
+        fail(400, "活动报名截止时间无效，请联系发布者")
+    return datetime.now(parsed.tzinfo) >= parsed
