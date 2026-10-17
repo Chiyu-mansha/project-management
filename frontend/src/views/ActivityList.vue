@@ -1,5 +1,6 @@
 <template>
   <div>
+    <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
     <div class="toolbar">
       <el-select v-model="query.type" placeholder="活动类型" clearable filterable allow-create default-first-option style="width:150px" @change="load">
         <el-option v-for="t in TYPES" :key="t" :label="t" :value="t" />
@@ -43,14 +44,19 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { Search } from '@element-plus/icons-vue'
+import { createApiClient } from '../api/request.js'
+import { readList } from '../domain/model.js'
 
-const API = 'http://localhost:8000'
+const request = createApiClient({ baseUrl: import.meta.env.VITE_API_BASE_URL || '/api' })
 const TYPES = ['学科类', '文体类', '科创竞赛', '社会实践']
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
+const error = ref('')
+let controller
+let revision = 0
 const query = reactive({ type: '', tags: '', keyword: '', status: '' })
 
 const fmtTime = (s) => (s ? String(s).replace('T', ' ') : '—')
@@ -66,21 +72,32 @@ const statusType = (s) => STATUS[s]?.type || 'info'
 
 const load = async () => {
   loading.value = true
+  error.value = ''
+  controller?.abort()
+  controller = new AbortController()
+  const ticket = ++revision
   try {
     const p = new URLSearchParams({ page: 1, page_size: 100 })
     if (query.type) p.append('type', query.type)
     if (query.tags) p.append('tags', query.tags)
     if (query.keyword) p.append('keyword', query.keyword)
     if (query.status) p.append('status', query.status)
-    const d = await (await fetch(`${API}/api/activities?${p}`)).json()
-    rows.value = d.items || []
+    const d = readList(await request('/activities', {
+      query: Object.fromEntries(p), signal: controller.signal,
+      authRequired: false, allowBareResponse: true
+    }))
+    if (ticket !== revision) return
+    rows.value = d.items
     total.value = d.total
+  } catch (cause) {
+    if (ticket === revision && cause.name !== 'AbortError') error.value = cause.message
   } finally {
-    loading.value = false
+    if (ticket === revision) loading.value = false
   }
 }
 
 onMounted(load)
+onBeforeUnmount(() => { ++revision; controller?.abort() })
 </script>
 
 <style scoped>

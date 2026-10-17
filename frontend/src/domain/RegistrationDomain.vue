@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createApiClient } from '../api/request.js'
 import { createRegistrationApi } from '../api/registrations.js'
@@ -8,6 +8,7 @@ import RegistrationDialog from './components/RegistrationDialog.vue'
 import RegistrationDetailDialog from './components/RegistrationDetailDialog.vue'
 import MyRegistrations from './components/MyRegistrations.vue'
 import ActivityRegistrations from './components/ActivityRegistrations.vue'
+import { normalizeSession } from '../auth/session.js'
 import './domain.css'
 
 const props = defineProps({
@@ -17,8 +18,14 @@ const props = defineProps({
   generateFieldKey: Function,
   readRegistrationDetail: Function
 })
-const emit = defineEmits(['back', 'form-saved', 'registration-submitted', 'registration-cancelled'])
-const api = createRegistrationApi(createApiClient({ baseUrl: props.baseUrl, getToken: () => props.session?.token }))
+const emit = defineEmits(['back', 'form-saved', 'registration-submitted', 'registration-cancelled', 'session-expired'])
+const currentSession = computed(() => {
+  try { return normalizeSession(props.session) } catch { return null }
+})
+const api = computed(() => createRegistrationApi(createApiClient({
+  baseUrl: props.baseUrl, getToken: () => currentSession.value?.token,
+  onUnauthorized: () => emit('session-expired')
+})))
 const templateDialog = ref(null)
 const registrationDialog = ref(null)
 const detailDialog = ref(null)
@@ -26,14 +33,15 @@ const myRegistrations = ref(null)
 const page = ref('home')
 const activityId = ref(null)
 const opening = ref(false)
-const student = computed(() => props.session?.role === 'student' && !!props.session?.token && props.session?.id != null)
+let openingVersion = 0
+const student = computed(() => currentSession.value?.role === 'student')
 
 function allowed(role) {
-  if (!props.session?.token || props.session.id == null) {
+  if (!currentSession.value) {
     ElMessage.error('请先登录')
     return false
   }
-  if (props.session.role !== role) {
+  if (currentSession.value.role !== role) {
     ElMessage.error('无权限访问')
     return false
   }
@@ -45,18 +53,21 @@ function back() {
 }
 async function openCreateForm(id) {
   if (!allowed('organizer') || opening.value) return
+  const ticket = ++openingVersion
   opening.value = true
-  try { await templateDialog.value.openCreate(id) } finally { opening.value = false }
+  try { await templateDialog.value.openCreate(id) } finally { if (ticket === openingVersion) opening.value = false }
 }
 async function openFormTemplate(id) {
   if (!allowed('organizer') || opening.value) return
+  const ticket = ++openingVersion
   opening.value = true
-  try { await templateDialog.value.openView(id) } finally { opening.value = false }
+  try { await templateDialog.value.openView(id) } finally { if (ticket === openingVersion) opening.value = false }
 }
 async function openRegistration(id) {
   if (!allowed('student') || opening.value) return
+  const ticket = ++openingVersion
   opening.value = true
-  try { await registrationDialog.value.open(id) } finally { opening.value = false }
+  try { await registrationDialog.value.open(id) } finally { if (ticket === openingVersion) opening.value = false }
 }
 function openActivityRegistrations(id) {
   if (!allowed('organizer')) return
@@ -82,16 +93,19 @@ async function cancelled(id) {
   emit('registration-cancelled', id)
   if (page.value === 'my-registrations') await myRegistrations.value?.refresh()
 }
-watch(() => [props.session?.token, props.session?.id, props.session?.role], () => {
+function reset() {
+  ++openingVersion
   page.value = 'home'
   opening.value = false
   templateDialog.value?.reset()
   registrationDialog.value?.reset()
   detailDialog.value?.reset()
-})
+}
+watch(() => [props.session?.token, props.session?.id, props.session?.role, props.baseUrl], reset)
+onBeforeUnmount(reset)
 
 // POD-1 calls these functions with an actual activity id from its own page.
-defineExpose({ openCreateForm, openFormTemplate, openRegistration, openActivityRegistrations, openMyRegistrations, openRegistrationDetail })
+defineExpose({ openCreateForm, openFormTemplate, openRegistration, openActivityRegistrations, openMyRegistrations, openRegistrationDetail, reset })
 </script>
 
 <template>
@@ -105,7 +119,7 @@ defineExpose({ openCreateForm, openFormTemplate, openRegistration, openActivityR
         </div>
       </slot>
     </template>
-    <MyRegistrations v-else-if="page === 'my-registrations' && student" ref="myRegistrations" :api="api" :user-id="session.id" @back="back" @view="openRegistrationDetail" />
+    <MyRegistrations v-else-if="page === 'my-registrations' && student" ref="myRegistrations" :api="api" :user-id="currentSession.id" @back="back" @view="openRegistrationDetail" />
     <ActivityRegistrations v-else-if="page === 'activity-registrations'" :api="api" :activity-id="activityId" @back="back" />
     <FormTemplateDialog ref="templateDialog" :api="api" :generate-field-key="generateFieldKey" @saved="emit('form-saved', $event)" />
     <RegistrationDialog ref="registrationDialog" :api="api" @submitted="submitted" />
