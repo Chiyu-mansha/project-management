@@ -1,4 +1,6 @@
 <script setup>
+import { defineAsyncComponent } from 'vue'
+const DevSessionPanel = import.meta.env.DEV ? defineAsyncComponent(() => import('./auth/DevSessionPanel.vue')) : null
 </script>
 
 <template>
@@ -9,8 +11,9 @@
       <el-button link @click="$router.push('/faqs')">📚 FAQ 知识库</el-button>
       <el-button link @click="$router.push('/qa')">💬 智能答疑</el-button>
       <el-button link @click="$router.push('/activities')">📅 活动发布</el-button>
-      <el-button link @click="$router.push('/registrations')">📝 报名管理(待登录接入)</el-button>
+      <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
     </nav>
+    <DevSessionPanel v-if="DevSessionPanel" />
     <main :class="{panel: $route.path !== '/'}"><router-view /></main>
   </div>
 </template>

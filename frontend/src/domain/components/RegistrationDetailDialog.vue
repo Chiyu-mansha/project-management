@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import AnswersView from './AnswersView.vue'
 import { validateDetailView } from '../model.js'
@@ -52,7 +52,7 @@ async function cancel() {
   const ticket = revision
   try {
     // Backend checks credentials. The frontend neither reads nor writes POD-3 tables.
-    await props.api.cancelRegistration(record.value.registration_id)
+    await props.api.cancelRegistration(record.value.registration_id, controller.signal)
     if (ticket !== revision) return
     ElMessage.success('已取消报名')
     saving.value = false
@@ -77,6 +77,7 @@ function reset() {
   record.value = null
   detail.value = null
 }
+onBeforeUnmount(reset)
 defineExpose({ open, close: dismiss, reset })
 </script>
 

@@ -1,14 +1,17 @@
 <template>
   <div>
     <div class="detail-head">
-      <h2>{{ act.title || '加载中…' }}</h2>
+      <h2>{{ act.title || (loading ? '加载中…' : '活动详情') }}</h2>
       <div>
-        <el-button type="warning" @click="$router.push(`/activities/${act.id}/edit`)">编辑</el-button>
+        <el-button v-if="owner" type="warning" @click="$router.push(`/activities/${act.id}/edit`)">编辑</el-button>
         <el-button @click="$router.push('/activities')">返回列表</el-button>
       </div>
     </div>
 
-    <el-descriptions :column="2" border>
+    <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
+    <el-button v-if="error" @click="load">重试</el-button>
+    <el-skeleton v-if="loading && !act.id" :rows="6" animated />
+    <el-descriptions v-if="act.id" :column="2" border v-loading="loading">
       <el-descriptions-item label="类型">{{ act.type || '-' }}</el-descriptions-item>
       <el-descriptions-item label="状态">
         <el-tag :type="statusType(act.status)">{{ statusText(act.status) }}</el-tag>
@@ -27,16 +30,27 @@
       <el-descriptions-item label="报名条件" :span="2">{{ act.requirements || '-' }}</el-descriptions-item>
       <el-descriptions-item label="简介" :span="2">{{ act.description || '-' }}</el-descriptions-item>
     </el-descriptions>
+    <ActivityRegistrationActions v-if="act.id" :activity="act" :session="session"
+      @session-expired="clearSession" @form-saved="load" @registration-submitted="load" @registration-cancelled="load" />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import ActivityRegistrationActions from '../domain/ActivityRegistrationActions.vue'
+import { ownsActivity } from '../domain/activityAccess.js'
+import { createApiClient } from '../api/request.js'
+import { session, clearSession } from '../auth/session.js'
 
-const API = 'http://localhost:8000'
 const route = useRoute()
 const act = ref({})
+const loading = ref(false)
+const error = ref('')
+const owner = computed(() => ownsActivity(act.value, session.value))
+const request = createApiClient({ baseUrl: import.meta.env.VITE_API_BASE_URL || '/api' })
+let controller
+let revision = 0
 
 const fmtTime = (s) => (s ? String(s).replace('T', ' ') : '—')
 const STATUS = {
@@ -49,10 +63,27 @@ const STATUS = {
 const statusText = (s) => STATUS[s]?.text || s
 const statusType = (s) => STATUS[s]?.type || 'info'
 
-onMounted(async () => {
-  const d = await (await fetch(`${API}/api/activities/${route.params.id}`)).json()
-  act.value = d
-})
+async function load() {
+  controller?.abort()
+  controller = new AbortController()
+  const ticket = ++revision
+  loading.value = true
+  error.value = ''
+  try {
+    const data = await request(`/activities/${encodeURIComponent(route.params.id)}`, {
+      signal: controller.signal, authRequired: false, allowBareResponse: true
+    })
+    if (ticket !== revision) return
+    if (!data?.id) throw new Error('活动详情加载失败，请稍后重试')
+    act.value = data
+  } catch (cause) {
+    if (ticket === revision && cause.name !== 'AbortError') error.value = cause.message
+  } finally {
+    if (ticket === revision) loading.value = false
+  }
+}
+watch(() => route.params.id, () => { act.value = {}; load() }, { immediate: true })
+onBeforeUnmount(() => { ++revision; controller?.abort() })
 </script>
 
 <style scoped>
