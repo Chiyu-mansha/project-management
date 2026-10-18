@@ -20,6 +20,19 @@ from database import get_conn, dict_row
 router = APIRouter(prefix="/api/activities", tags=["activities"])
 
 GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8100").rstrip("/")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+
+
+def _trigger_faq_extract(activity_id: int):
+    """发布/编辑活动后触发 FAQ 自动提取（成员3 的接口），失败不影响发布。"""
+    try:
+        requests.post(
+            f"{BACKEND_URL}/api/faqs/from-activity",
+            json={"activity_id": activity_id},
+            timeout=75,
+        )
+    except Exception:
+        pass
 
 
 class ActIn(BaseModel):
@@ -96,9 +109,11 @@ def create_activity(body: ActIn):
          body.signup_deadline, body.min_team_member, body.max_team_member,
          body.max_participants, body.status),
     )
+    new_id = cur.lastrowid
     conn.commit()
-    row = conn.execute("SELECT * FROM activities WHERE id=?", (cur.lastrowid,)).fetchone()
+    row = conn.execute("SELECT * FROM activities WHERE id=?", (new_id,)).fetchone()
     conn.close()
+    _trigger_faq_extract(new_id)
     return ok(dict_row(row))
 
 
@@ -182,6 +197,7 @@ def update_activity(activity_id: int, body: ActIn):
     conn.commit()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
     conn.close()
+    _trigger_faq_extract(activity_id)
     return ok(dict_row(row))
 
 
