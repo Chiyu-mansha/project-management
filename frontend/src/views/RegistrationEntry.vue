@@ -1,9 +1,21 @@
 <script setup>
-// 报名管理入口(PM 合并仪式 10-14):POD-2 在 d2c18b1 清理了 frontend/demo 演示代码(原则:不虚构会话),
-// 此处按 INTEGRATION.md 的正式挂载方式裸挂报名域。session 由 POD-2 本周交付的登录域接入。
+import { nextTick, ref, watch } from 'vue'
 import RegistrationDomain from '../domain/RegistrationDomain.vue'
+import { session, clearSession } from '../auth/session.js'
+const domain = ref(null)
+watch(session, async (value) => {
+  await nextTick()
+  if (value?.role === 'student') await domain.value?.openMyRegistrations()
+}, { immediate: true })
 </script>
 
 <template>
-  <RegistrationDomain />
+  <RegistrationDomain ref="domain" :session="session" @session-expired="clearSession">
+    <template #home>
+      <el-empty :description="session ? '请从自己发布的活动详情页管理报名表单和名单' : '请先登录，再查看我的报名'">
+        <el-button type="primary" @click="$router.push('/activities')">查看活动</el-button>
+      </el-empty>
+      <el-button v-if="session?.role === 'student'" @click="domain.openMyRegistrations()">查看我的报名</el-button>
+    </template>
+  </RegistrationDomain>
 </template>

@@ -21,7 +21,7 @@ def get_conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    """建表（幂等）：仅当库中尚无表时执行 schema.sql，表已存在则直接跳过。"""
+    """建表（幂等）：新库执行 schema.sql；老库补建后续新增的表。"""
     conn = get_conn()
     try:
         exists = conn.execute(
@@ -31,6 +31,29 @@ def init_db() -> None:
             schema = (BASE_DIR / "schema.sql").read_text(encoding="utf-8")
             conn.executescript(schema)
             conn.commit()
+        # 老库 users 已存在时 schema.sql 不会重跑，新增表在此补建（幂等）
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS activity_scores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                activity_id INTEGER NOT NULL,
+                signup_deadline TEXT,
+                eligible INTEGER NOT NULL DEFAULT 0,
+                major_score REAL,
+                interests_score REAL,
+                skills_score REAL,
+                conduct_score INTEGER,
+                innovation_score INTEGER,
+                comprehensive_score INTEGER,
+                source TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(user_id, activity_id),
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(activity_id) REFERENCES activities(id)
+            )"""
+        )
+        conn.commit()
     finally:
         conn.close()
 
