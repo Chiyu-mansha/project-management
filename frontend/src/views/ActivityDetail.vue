@@ -3,6 +3,7 @@
     <div class="detail-head">
       <h2>{{ act.title || '加载中…' }}</h2>
       <div>
+        <el-button type="success" @click="genDlg = true">✨ AI 生成推文</el-button>
         <el-button type="warning" @click="$router.push(`/activities/${act.id}/edit`)">编辑</el-button>
         <el-button @click="$router.push('/activities')">返回列表</el-button>
       </div>
@@ -27,12 +28,28 @@
       <el-descriptions-item label="报名条件" :span="2">{{ act.requirements || '-' }}</el-descriptions-item>
       <el-descriptions-item label="简介" :span="2">{{ act.description || '-' }}</el-descriptions-item>
     </el-descriptions>
+
+    <el-dialog v-model="genDlg" title="✨ AI 生成推文" width="640px">
+      <div class="gen-bar">
+        <span>风格：</span>
+        <el-radio-group v-model="genStyle" size="small">
+          <el-radio-button label="简约" /><el-radio-button label="活泼" /><el-radio-button label="正式" />
+        </el-radio-group>
+        <el-button type="primary" size="small" :loading="genLoading" @click="generate">生成</el-button>
+      </div>
+      <el-input v-model="genContent" type="textarea" :rows="12" placeholder="点击「生成」，AI 会基于活动信息生成推文，可手动二次编辑…" />
+      <template #footer>
+        <el-button @click="copyGen">复制</el-button>
+        <el-button type="primary" @click="genDlg = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 
 const API = 'http://localhost:8000'
 const route = useRoute()
@@ -49,6 +66,30 @@ const STATUS = {
 const statusText = (s) => STATUS[s]?.text || s
 const statusType = (s) => STATUS[s]?.type || 'info'
 
+// AI 推文生成
+const genDlg = ref(false)
+const genStyle = ref('简约')
+const genContent = ref('')
+const genLoading = ref(false)
+
+const generate = async () => {
+  genLoading.value = true
+  try {
+    const d = await (await fetch(`${API}/api/activities/${route.params.id}/generate-article`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ style: genStyle.value }),
+    })).json()
+    genContent.value = d.data?.content || ''
+  } finally {
+    genLoading.value = false
+  }
+}
+
+const copyGen = async () => {
+  try { await navigator.clipboard.writeText(genContent.value); ElMessage.success('已复制') }
+  catch { ElMessage.error('复制失败') }
+}
+
 onMounted(async () => {
   const d = await (await fetch(`${API}/api/activities/${route.params.id}`)).json()
   act.value = d.data
@@ -58,4 +99,5 @@ onMounted(async () => {
 <style scoped>
 .detail-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .detail-head h2{margin:0}
+.gen-bar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 </style>

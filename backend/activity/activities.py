@@ -6,15 +6,20 @@
 - GET    /api/activities/{id}   详情
 - PUT    /api/activities/{id}   编辑/变更
 """
+import os
+from datetime import datetime
 from typing import Optional
 
+import requests
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from common import fail, ok
 from database import get_conn, dict_row
 
 router = APIRouter(prefix="/api/activities", tags=["activities"])
+
+GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8100").rstrip("/")
 
 
 class ActIn(BaseModel):
@@ -38,15 +43,39 @@ class ActIn(BaseModel):
     max_participants: Optional[int] = None    # 报名上限(队伍数)
     status: Optional[str] = "draft"           # draft/published/ongoing/finished/cancelled
 
+    @model_validator(mode="after")
+    def _clear_scores_without_comprehensive(self):
+        """不提供综测加分(comprehensive_score=0)时，操行分/创新分必须为空。"""
+        if self.comprehensive_score != 1:
+            self.conduct_score = None
+            self.innovation_score = None
+        return self
 
-# 状态机：draft -> published -> ongoing -> finished 单向；cancelled 为终态
+
+# 状态机：draft -> published、-> cancelled 手动；ongoing/finished 由时间自动流转；cancelled 终态
 ALLOWED = {
     "draft": {"draft", "published", "cancelled"},
-    "published": {"published", "ongoing", "cancelled"},
-    "ongoing": {"ongoing", "finished", "cancelled"},
+    "published": {"published", "cancelled"},
+    "ongoing": {"ongoing", "cancelled"},
     "finished": {"finished"},
     "cancelled": {"cancelled"},
 }
+
+
+def _auto_transition(conn):
+    """按时间自动流转：published 已到开始时间 -> ongoing；ongoing 已到结束时间 -> finished。"""
+    now = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    conn.execute(
+        "UPDATE activities SET status='ongoing' WHERE status='published' "
+        "AND start_time IS NOT NULL AND start_time != '' AND start_time <= ?",
+        (now,),
+    )
+    conn.execute(
+        "UPDATE activities SET status='finished' WHERE status='ongoing' "
+        "AND end_time IS NOT NULL AND end_time != '' AND end_time <= ?",
+        (now,),
+    )
+    conn.commit()
 
 _COLUMNS = (
     "title, type, organizer_id, start_time, end_time, location, description, "
@@ -96,9 +125,13 @@ def list_activities(
     if status:
         where.append("status = ?")
         params.append(status)
+    else:
+        # 默认隐藏已取消的活动（想查看时传 status=cancelled）
+        where.append("status != 'cancelled'")
 
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     conn = get_conn()
+    _auto_transition(conn)
     total = conn.execute(f"SELECT COUNT(*) AS c FROM activities{clause}", params).fetchone()["c"]
     offset = (page - 1) * page_size
     rows = conn.execute(
@@ -112,6 +145,7 @@ def list_activities(
 @router.get("/{activity_id}")
 def get_activity(activity_id: int):
     conn = get_conn()
+    _auto_transition(conn)
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
     conn.close()
     if row is None:
@@ -149,3 +183,49 @@ def update_activity(activity_id: int, body: ActIn):
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
     conn.close()
     return ok(dict_row(row))
+
+
+class ArticleGenReq(BaseModel):
+    style: str = "简约"   # 简约 / 活泼 / 正式
+
+
+@router.post("/{activity_id}/generate-article")
+def generate_article(activity_id: int, body: ArticleGenReq):
+    """AI 推文生成：查活动 -> 调网关 generate-article -> 返回推文 Markdown。"""
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
+    if row is None:
+        conn.close()
+        fail(404, "活动不存在")
+    act = dict_row(row)
+    # 补充主办方名称（网关拼 prompt 用 organizer 字段显示）
+    if act.get("organizer_id"):
+        org = conn.execute("SELECT name, organization FROM organizers WHERE id=?", (act["organizer_id"],)).fetchone()
+        if org:
+            act["organizer"] = org["name"] + (f"（{org['organization']}）" if org["organization"] else "")
+    conn.close()
+    # 综测加分文案（网关拼 prompt 用 zongce_score 字段显示）
+    parts = []
+    if act.get("comprehensive_score"):
+        parts.append("综合素养积分")
+    if act.get("conduct_score"):
+        parts.append(f"操行分 +{act['conduct_score']}")
+    if act.get("innovation_score"):
+        parts.append(f"创新分 +{act['innovation_score']}")
+    act["zongce_score"] = "、".join(parts) if parts else ""
+    try:
+        resp = requests.post(
+            f"{GATEWAY_URL}/api/ai/generate-article",
+            json={"style": body.style, "activity": act, "activity_id": activity_id},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        content = resp.json().get("content", "")
+    except Exception:
+        # 网关不可用，降级返回活动基础信息
+        content = (
+            f"> 网关暂不可用，已降级。请手动为「{act.get('title', '')}」编写推文。\n\n"
+            f"- 时间：{act.get('start_time', '') or '待定'}\n"
+            f"- 地点：{act.get('location', '') or '待定'}"
+        )
+    return ok({"content": content})
