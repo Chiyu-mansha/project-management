@@ -10,6 +10,7 @@
       <el-button link @click="$router.push('/qa')">💬 智能答疑</el-button>
       <el-button link @click="$router.push('/activities')">📅 活动发布</el-button>
       <el-button link @click="$router.push('/registrations')">📝 报名管理(待登录接入)</el-button>
+      <el-button link @click="$router.push('/notifications')">🔔 通知中心</el-button>
     </nav>
     <main :class="{panel: $route.path !== '/'}"><router-view /></main>
   </div>

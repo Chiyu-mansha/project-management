@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from database import init_db as init_db_pod1
 from activity import activity_router
 from faq import faqs_router, faqs_auto_router, qa_router
+from notification import notifications_router
 
 import db
 from common import ok
@@ -46,6 +47,7 @@ app.include_router(activity_router)
 app.include_router(faqs_router)
 app.include_router(faqs_auto_router)
 app.include_router(qa_router)
+app.include_router(notifications_router)
 
 # ---- POD-2:报名域(POD-1 正式活动接口已合入,原 activities_stub 按注释删除) ----
 app.include_router(forms_router)

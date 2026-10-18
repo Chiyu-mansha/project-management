@@ -6,6 +6,7 @@ import ActivityList from '../views/ActivityList.vue'
 import ActivityForm from '../views/ActivityForm.vue'
 import ActivityDetail from '../views/ActivityDetail.vue'
 import RegistrationEntry from '../views/RegistrationEntry.vue'
+import Notifications from '../views/Notifications.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -18,5 +19,6 @@ export default createRouter({
     { path: '/activities/:id', component: ActivityDetail },
     { path: '/activities/:id/edit', component: ActivityForm },
     { path: '/registrations', component: RegistrationEntry },
+    { path: '/notifications', component: Notifications },
   ],
 })
