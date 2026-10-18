@@ -6,6 +6,10 @@ from typing import Optional
 from database import get_conn, dict_row
 from .llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
 
+
+def _now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
 router = APIRouter(prefix="/api/qa", tags=["qa"])
 
 
@@ -36,6 +40,14 @@ def _norm(q: str) -> str:
     return q
 
 
+def _overlap(a: str, b: str) -> float:
+    """归一化字面重合度：交集字符数 / 较长者长度，用于双条件判重的第二道门槛。"""
+    if not a or not b:
+        return 0.0
+    sa, sb = set(a), set(b)
+    return len(sa & sb) / max(len(sa), len(sb))
+
+
 @router.post("/ask")
 def ask(body: AskIn):
     q = (body.question or "").strip()
@@ -58,21 +70,51 @@ def ask(body: AskIn):
                     (f"%{q}%", q),
                 ).fetchone()
         else:
-            row = conn.execute(
-                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
+            # 全局搜索：LIKE 可能命中多条（如“蜜雪冰城开门时间”命中“食堂开门时间”），
+            # 按归一化字面重合度排序，低于 0.5 宁可走网关也不硬返回，避免串台。
+            rows = conn.execute(
+                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 10",
                 (f"%{q}%", q),
-            ).fetchone()
+            ).fetchall()
+            if rows:
+                nq = _norm(q)
+                scored = sorted(
+                    (dict_row(r) for r in rows),
+                    key=lambda d: _overlap(nq, _norm(d.get("question", ""))),
+                    reverse=True,
+                )
+                if _overlap(nq, _norm(scored[0].get("question", ""))) >= 0.5:
+                    row = next((r for r in rows if dict_row(r)["id"] == scored[0]["id"]), None)
     if row:
         d = dict_row(row)
         _log(conn, body.activity_id, q, d["answer"], "faq")
         conn.commit(); conn.close()
         return {"answer": d["answer"], "source": "faq", "faq_id": d["id"]}
-    # 2. 未命中 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
+    # 2. 未命中 → 先看 7 天内同样归一化问题有没有 llm 缓存，有直接复用，不调网关
+    nq = _norm(q)
+    if not body.no_cache:
+        # 归一化比对：日志存的是原问题，逐条归一化后比；同活动/同全局范围
+        logs = conn.execute(
+            """SELECT question, answer FROM qa_logs WHERE source='llm'
+               AND ((activity_id IS ? AND ? IS NULL) OR activity_id = ?)
+               AND created_at >= datetime('now','-7 days') ORDER BY id DESC LIMIT 50""",
+            (body.activity_id, body.activity_id, body.activity_id),
+        ).fetchall()
+        cached = None
+        for lq, la in logs:
+            if _norm(lq) == nq and la:
+                cached = la
+                break
+        if cached:
+            _log(conn, body.activity_id, q, cached, "llm")
+            conn.commit(); conn.close()
+            return {"answer": cached, "source": "llm", "faq_id": None, "cached": True}
+    # 3. 无缓存 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
     result = chat(q, body.activity_id)
     answer = result["answer"]
     _log(conn, body.activity_id, q, answer, "llm")
     conn.commit(); conn.close()
-    return {"answer": answer, "source": "llm", "faq_id": None}
+    return {"answer": answer, "source": "llm", "faq_id": None, "cached": False}
 
 
 def _log(conn, activity_id, question, answer, source):
@@ -98,19 +140,45 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
         g = groups.setdefault(key, {"question": r["question"], "answer": r["answer"], "activity_id": r["activity_id"], "count": 0})
         g["count"] += 1
         g["answer"] = r["answer"] or g["answer"]
-    conn.close()
     # 规则归一化先聚一轮（快）
     basics = list(groups.values())
+    # 连接要留到合并块之后（合并要用它读写 sim_cache），不能提前 close
     # 开启真实网关时，再用 AI 做同义词合并（把不同问法归为一类）
+    # 保守策略：循环逐个比对；网关异常/返回-1/格式不对一律不并（宁可漏，不错并）；
+    # 只合并同一活动（activity_id 相等）的组，不跨活动归并。
+    # 同义结果缓存一天：同一组问题串拼成 key，命中直接用，不调网关。
     if USE_REAL_LLM and len(basics) > 1:
         merged = []
         for g in basics:
-            idx = gw_similar(g["question"], [m["question"] for m in merged])
-            if idx >= 0:
-                merged[idx]["count"] += g["count"]
+            hit = -1
+            try:
+                cands = [m["question"] for m in merged]
+                if cands:
+                    cache_key = "SIM:" + _norm(g["question"]) + "||" + "||".join(sorted(_norm(c) for c in cands))
+                    row = conn.execute(
+                        "SELECT answer FROM qa_logs WHERE source='sim_cache' AND question=? AND created_at >= datetime('now','-1 day')",
+                        (cache_key,),
+                    ).fetchone()
+                    if row:
+                        idx = int(row[0])
+                    else:
+                        idx = gw_similar(g["question"], cands)
+                        conn.execute(
+                            "INSERT INTO qa_logs(activity_id,question,answer,source,count,created_at) VALUES(NULL,?,?,'sim_cache',1,?)",
+                            (cache_key, str(idx), datetime.now().isoformat(timespec="seconds")),
+                        )
+                        conn.commit()
+                    if isinstance(idx, int) and 0 <= idx < len(merged):
+                        if merged[idx]["activity_id"] == g["activity_id"]:
+                            hit = idx
+            except Exception:
+                hit = -1
+            if hit >= 0:
+                merged[hit]["count"] += g["count"]
             else:
                 merged.append(g)
         basics = merged
+    conn.close()
     out = [g for g in basics if _norm(g["question"]) not in faq_norm and g["count"] >= min_count]
     out.sort(key=lambda x: -x["count"])
     return {"items": out, "total": len(out), "min_count": min_count}
@@ -122,7 +190,7 @@ def feedback(body: FeedbackIn):
     conn = get_conn()
     changed = False
     if body.action == "dislike" and body.faq_id:
-        conn.execute("UPDATE faqs SET status='draft' WHERE id=?", (body.faq_id,))
+        conn.execute("UPDATE faqs SET status='draft',updated_at=? WHERE id=?", (_now(), body.faq_id,))
         conn.commit(); changed = True
     conn.close()
     return {"ok": True, "faq_downgraded": changed}
@@ -133,8 +201,8 @@ def accept(body: AcceptIn):
     """把候选问答沉淀为 FAQ 草稿，等管理员审核。source=auto, status=draft。"""
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title) VALUES(?,?,?,?,?,?,?)",
-        (body.activity_id, body.question, body.answer, body.category, "auto", "draft", "高频提问"),
+        "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        (body.activity_id, body.question, body.answer, body.category, "auto", "draft", "高频提问", _now()),
     )
     conn.commit()
     nid = cur.lastrowid

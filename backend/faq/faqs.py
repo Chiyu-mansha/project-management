@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
@@ -6,12 +7,16 @@ from database import get_conn, dict_row
 router = APIRouter(prefix="/api/faqs", tags=["faqs"])
 
 
+def _now():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 class FaqIn(BaseModel):
     activity_id: Optional[int] = None
     question: str
     answer: str
     category: Optional[str] = ""
-    source: Optional[str] = "manual"
+    source: Optional[str] = "auto"
     status: Optional[str] = "published"
     origin_title: Optional[str] = ""
 
@@ -58,11 +63,11 @@ def create_faq(body: FaqIn):
     if not body.question.strip() or not body.answer.strip():
         raise HTTPException(400, "question/answer 不能为空")
     if body.source not in ("manual", "auto", "llm"):
-        body.source = "manual"
+        body.source = "auto"
     conn = get_conn()
     cur = conn.execute(
-        "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title) VALUES(?,?,?,?,?,?,?)",
-        (body.activity_id, body.question, body.answer, body.category, body.source, body.status, body.origin_title),
+        "INSERT INTO faqs(activity_id,question,answer,category,source,status,origin_title,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        (body.activity_id, body.question, body.answer, body.category, body.source, body.status, body.origin_title, _now()),
     )
     conn.commit()
     new_id = cur.lastrowid
@@ -79,8 +84,8 @@ def update_faq(faq_id: int, body: FaqIn):
         conn.close()
         raise HTTPException(404, "FAQ 不存在")
     conn.execute(
-        "UPDATE faqs SET activity_id=?,question=?,answer=?,category=?,source=?,status=?,origin_title=? WHERE id=?",
-        (body.activity_id, body.question, body.answer, body.category, body.source, body.status, body.origin_title, faq_id),
+        "UPDATE faqs SET activity_id=?,question=?,answer=?,category=?,source=?,status=?,origin_title=?,updated_at=? WHERE id=?",
+        (body.activity_id, body.question, body.answer, body.category, body.source, body.status, body.origin_title, _now(), faq_id),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM faqs WHERE id=?", (faq_id,)).fetchone()
