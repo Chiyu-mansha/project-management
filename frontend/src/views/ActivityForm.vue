@@ -31,7 +31,10 @@
       <el-form-item label="报名截止">
         <el-date-picker v-model="form.signup_deadline" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="选择报名截止时间" style="width:100%" />
       </el-form-item>
-      <el-form-item label="队伍人数">
+      <el-form-item label="组队报名">
+        <el-switch v-model="isTeam" active-text="需要组队" inactive-text="个人" />
+      </el-form-item>
+      <el-form-item v-if="isTeam" label="队伍人数">
         <div style="display:flex;gap:8px;align-items:center">
           <el-input-number v-model="form.min_team_member" :min="1" /> 至
           <el-input-number v-model="form.max_team_member" :min="1" />
@@ -43,14 +46,14 @@
       <el-form-item label="发电子票">
         <el-switch v-model="form.has_ticket" :active-value="1" :inactive-value="0" />
       </el-form-item>
-      <el-form-item label="综合素养分">
-        <el-switch v-model="form.comprehensive_score" :active-value="1" :inactive-value="0" active-text="能加" inactive-text="不加" />
+      <el-form-item label="综测加分">
+        <el-switch v-model="form.comprehensive_score" :active-value="1" :inactive-value="0" active-text="提供" inactive-text="不提供" @change="onScoreSwitch" />
       </el-form-item>
       <el-form-item label="操行分">
-        <el-input-number v-model="form.conduct_score" :min="0" :step="0.5" style="width:100%" />
+        <el-input-number v-model="form.conduct_score" :min="0" :step="0.5" :disabled="form.comprehensive_score !== 1" style="width:100%" />
       </el-form-item>
       <el-form-item label="创新分">
-        <el-input-number v-model="form.innovation_score" :min="0" :step="0.5" style="width:100%" />
+        <el-input-number v-model="form.innovation_score" :min="0" :step="0.5" :disabled="form.comprehensive_score !== 1" style="width:100%" />
       </el-form-item>
       <el-form-item label="状态">
         <el-radio-group v-model="form.status">
@@ -84,13 +87,19 @@ const saving = ref(false)
 // 状态机：draft -> published -> ongoing -> finished 单向；cancelled 为终态；新建只能草稿/发布
 const ALLOWED = {
   draft: ['draft', 'published', 'cancelled'],
-  published: ['published', 'ongoing', 'cancelled'],
-  ongoing: ['ongoing', 'finished', 'cancelled'],
+  published: ['published', 'cancelled'],
+  ongoing: ['ongoing', 'cancelled'],
   finished: ['finished'],
   cancelled: ['cancelled'],
 }
 const origStatus = ref('draft')
-const canSet = (s) => (!isEdit.value ? ['draft', 'published'].includes(s) : ALLOWED[origStatus.value]?.includes(s) ?? false)
+const isTeam = ref(false)
+// 进行中/已结束 由时间自动流转，不可手动设置
+const canSet = (s) => {
+  if (s === 'ongoing' || s === 'finished') return false
+  if (!isEdit.value) return ['draft', 'published'].includes(s)
+  return ALLOWED[origStatus.value]?.includes(s) ?? false
+}
 
 const form = reactive({
   title: '', type: '', organizer_id: null, start_time: '', end_time: '', location: '',
@@ -100,11 +109,20 @@ const form = reactive({
   status: 'draft',
 })
 
+// 不提供综测加分时，清空分值（输入框同时被禁用）
+const onScoreSwitch = () => {
+  if (form.comprehensive_score !== 1) {
+    form.conduct_score = null
+    form.innovation_score = null
+  }
+}
+
 onMounted(async () => {
   if (isEdit.value) {
     const d = await (await fetch(`${API}/api/activities/${route.params.id}`)).json()
-    origStatus.value = d.status || 'draft'
-    Object.assign(form, d)
+    origStatus.value = d.data?.status || 'draft'
+    isTeam.value = (d.data?.max_team_member || 1) > 1
+    Object.assign(form, d.data)
   }
 })
 
@@ -112,6 +130,7 @@ const save = async () => {
   if (!form.title.trim()) return ElMessage.error('活动标题必填')
   if (!form.start_time) return ElMessage.error('请选择开始时间')
   if (!form.location.trim()) return ElMessage.error('请填写地点')
+  if (!isTeam.value) { form.min_team_member = 1; form.max_team_member = 1 }
   if (form.max_team_member < form.min_team_member) return ElMessage.error('最多人数不能小于最少人数')
   saving.value = true
   try {
@@ -119,7 +138,7 @@ const save = async () => {
     const r = await fetch(url, { method: isEdit.value ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
     if (!r.ok) {
       const e = await r.json().catch(() => ({}))
-      return ElMessage.error(e.detail || '保存失败')
+      return ElMessage.error(e.message || '保存失败')
     }
     ElMessage.success(isEdit.value ? '已保存' : '发布成功')
     router.push('/activities')

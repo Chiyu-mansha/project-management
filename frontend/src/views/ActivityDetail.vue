@@ -3,6 +3,7 @@
     <div class="detail-head">
       <h2>{{ act.title || (loading ? '加载中…' : '活动详情') }}</h2>
       <div>
+        <el-button type="success" @click="genDlg = true">✨ AI 生成推文</el-button>
         <el-button v-if="owner" type="warning" @click="$router.push(`/activities/${act.id}/edit`)">编辑</el-button>
         <el-button @click="$router.push('/activities')">返回列表</el-button>
       </div>
@@ -32,6 +33,21 @@
     </el-descriptions>
     <ActivityRegistrationActions v-if="act.id" :activity="act" :session="session"
       @session-expired="clearSession" @form-saved="load" @registration-submitted="load" @registration-cancelled="load" />
+
+    <el-dialog v-model="genDlg" title="✨ AI 生成推文" width="640px">
+      <div class="gen-bar">
+        <span>风格：</span>
+        <el-radio-group v-model="genStyle" size="small">
+          <el-radio-button label="简约" /><el-radio-button label="活泼" /><el-radio-button label="正式" />
+        </el-radio-group>
+        <el-button type="primary" size="small" :loading="genLoading" @click="generate">生成</el-button>
+      </div>
+      <el-input v-model="genContent" type="textarea" :rows="12" placeholder="点击「生成」，AI 会基于活动信息生成推文，可手动二次编辑…" />
+      <template #footer>
+        <el-button @click="copyGen">复制</el-button>
+        <el-button type="primary" @click="genDlg = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -42,6 +58,10 @@ import ActivityRegistrationActions from '../domain/ActivityRegistrationActions.v
 import { ownsActivity } from '../domain/activityAccess.js'
 import { createApiClient } from '../api/request.js'
 import { session, clearSession } from '../auth/session.js'
+import { ElMessage } from 'element-plus'
+
+// AI 推文走 vite 代理(127.0.0.1:8000),避免 Windows localhost 解析问题(PM 合并仪式整合)
+const API = import.meta.env.VITE_API_BASE_URL || ''
 
 const route = useRoute()
 const act = ref({})
@@ -84,9 +104,34 @@ async function load() {
 }
 watch(() => route.params.id, () => { act.value = {}; load() }, { immediate: true })
 onBeforeUnmount(() => { ++revision; controller?.abort() })
+
+// AI 推文生成(POD-1)
+const genDlg = ref(false)
+const genStyle = ref('简约')
+const genContent = ref('')
+const genLoading = ref(false)
+
+const generate = async () => {
+  genLoading.value = true
+  try {
+    const d = await (await fetch(`${API}/api/activities/${route.params.id}/generate-article`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ style: genStyle.value }),
+    })).json()
+    genContent.value = d.data?.content || ''
+  } finally {
+    genLoading.value = false
+  }
+}
+
+const copyGen = async () => {
+  try { await navigator.clipboard.writeText(genContent.value); ElMessage.success('已复制') }
+  catch { ElMessage.error('复制失败') }
+}
 </script>
 
 <style scoped>
 .detail-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .detail-head h2{margin:0}
+.gen-bar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 </style>

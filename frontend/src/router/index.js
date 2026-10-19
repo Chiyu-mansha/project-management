@@ -11,6 +11,7 @@ import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
 import Profile from '../views/Profile.vue'
 import Recommend from '../views/Recommend.vue'
+import Notifications from '../views/Notifications.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -27,6 +28,7 @@ const router = createRouter({
     { path: '/register', component: Register },
     { path: '/profile', component: Profile },
     { path: '/recommend', component: Recommend },
+    { path: '/notifications', component: Notifications },
   ],
 })
 

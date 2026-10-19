@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from database import init_db as init_db_pod1
 from activity import activity_router
 from faq import faqs_router, faqs_auto_router, qa_router
+from notification import notifications_router
 
 import db
 from auth_routes import router as auth_router
@@ -46,6 +47,7 @@ app.include_router(activity_router)
 app.include_router(faqs_router)
 app.include_router(faqs_auto_router)
 app.include_router(qa_router)
+app.include_router(notifications_router)
 
 # ---- POD-2:认证/画像/推荐 + 报名域(POD-1 正式活动接口已合入) ----
 app.include_router(auth_router)

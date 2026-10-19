@@ -18,6 +18,7 @@ function logout() { clearSession(); router.push('/') }
       <el-button link @click="$router.push('/qa')">💬 智能答疑</el-button>
       <el-button link @click="$router.push('/activities')">📅 活动发布</el-button>
       <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
+      <el-button link @click="$router.push('/notifications')">🔔 通知中心</el-button>
       <el-button link @click="$router.push('/recommend')">🎯 智能推荐</el-button>
       <el-button link @click="$router.push('/profile')">👤 我的画像</el-button>
       <span v-if="session" class="session-info">{{ session.role === 'student' ? '学生' : '发布者' }} #{{ session.id }}</span>
