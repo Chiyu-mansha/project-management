@@ -14,13 +14,14 @@ function logout() { clearSession(); router.push('/') }
     <header class="app-header"><h1>校园活动智能通知&amp;报名助理</h1></header>
     <nav class="topbar">
       <el-button link @click="$router.push('/')">🏠 首页</el-button>
+      <el-button link @click="$router.push('/browse')">🎉 活动广场</el-button>
+      <el-button v-if="session?.role === 'organizer'" link @click="$router.push('/activities')">📅 活动发布</el-button>
+      <el-button v-if="session?.role === 'student'" link @click="$router.push('/recommend')">🎯 智能推荐</el-button>
+      <el-button v-if="session?.role === 'student'" link @click="$router.push('/profile')">👤 我的画像</el-button>
+      <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
       <el-button link @click="$router.push('/faqs')">📚 FAQ 知识库</el-button>
       <el-button link @click="$router.push('/qa')">💬 智能答疑</el-button>
-      <el-button link @click="$router.push('/activities')">📅 活动发布</el-button>
-      <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
       <el-button link @click="$router.push('/notifications')">🔔 通知中心</el-button>
-      <el-button link @click="$router.push('/recommend')">🎯 智能推荐</el-button>
-      <el-button link @click="$router.push('/profile')">👤 我的画像</el-button>
       <span v-if="session" class="session-info">{{ session.role === 'student' ? '学生' : '发布者' }} #{{ session.id }}</span>
       <el-button v-if="!session" link type="primary" @click="$router.push('/login')">🔑 登录</el-button>
       <el-button v-else link @click="logout">退出</el-button>

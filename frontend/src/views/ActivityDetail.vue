@@ -3,7 +3,7 @@
     <div class="detail-head">
       <h2>{{ act.title || (loading ? '加载中…' : '活动详情') }}</h2>
       <div>
-        <el-button type="success" @click="genDlg = true">✨ AI 生成推文</el-button>
+        <el-button v-if="owner" type="success" @click="genDlg = true">✨ AI 生成推文</el-button>
         <el-button v-if="owner" type="warning" @click="$router.push(`/activities/${act.id}/edit`)">编辑</el-button>
         <el-button @click="$router.push('/activities')">返回列表</el-button>
       </div>
@@ -31,20 +31,26 @@
       <el-descriptions-item label="报名条件" :span="2">{{ act.requirements || '-' }}</el-descriptions-item>
       <el-descriptions-item label="简介" :span="2">{{ act.description || '-' }}</el-descriptions-item>
     </el-descriptions>
+    <div v-if="act.article" class="article-card">
+      <h3 class="article-head">📄 活动推文</h3>
+      <MdPreview :modelValue="act.article" />
+    </div>
     <ActivityRegistrationActions v-if="act.id" :activity="act" :session="session"
       @session-expired="clearSession" @form-saved="load" @registration-submitted="load" @registration-cancelled="load" />
 
-    <el-dialog v-model="genDlg" title="✨ AI 生成推文" width="640px">
+    <el-dialog v-model="genDlg" title="✨ AI 生成推文" width="860px">
       <div class="gen-bar">
         <span>风格：</span>
         <el-radio-group v-model="genStyle" size="small">
           <el-radio-button label="简约" /><el-radio-button label="活泼" /><el-radio-button label="正式" />
         </el-radio-group>
         <el-button type="primary" size="small" :loading="genLoading" @click="generate">生成</el-button>
+        <el-button type="warning" size="small" :loading="genLoading" @click="polish">润色</el-button>
       </div>
-      <el-input v-model="genContent" type="textarea" :rows="12" placeholder="点击「生成」，AI 会基于活动信息生成推文，可手动二次编辑…" />
+      <MdEditor v-model="genContent" :on-upload-img="onUploadImg" style="height: 400px" />
       <template #footer>
         <el-button @click="copyGen">复制</el-button>
+        <el-button type="success" :loading="saveLoading" @click="saveArticle">保存推文</el-button>
         <el-button type="primary" @click="genDlg = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -59,6 +65,8 @@ import { ownsActivity } from '../domain/activityAccess.js'
 import { createApiClient } from '../api/request.js'
 import { session, clearSession } from '../auth/session.js'
 import { ElMessage } from 'element-plus'
+import { MdEditor, MdPreview } from 'md-editor-v3'
+import 'md-editor-v3/lib/style.css'
 
 // AI 推文走 vite 代理(127.0.0.1:8000),避免 Windows localhost 解析问题(PM 合并仪式整合)
 const API = import.meta.env.VITE_API_BASE_URL || ''
@@ -124,9 +132,55 @@ const generate = async () => {
   }
 }
 
+const polish = async () => {
+  if (!genContent.value) return ElMessage.warning('先点「生成」再润色')
+  genLoading.value = true
+  try {
+    const d = await (await fetch(`${API}/api/activities/${route.params.id}/polish-article`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: genContent.value, style: genStyle.value }),
+    })).json()
+    genContent.value = d.data?.content || genContent.value
+  } finally {
+    genLoading.value = false
+  }
+}
+
+const onUploadImg = async (files, callback) => {
+  const urls = await Promise.all(files.map(async (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const r = await fetch(`${API}/api/upload`, { method: 'POST', body: fd })
+    const d = await r.json()
+    return `${API}${d.data?.url || ''}`
+  }))
+  callback(urls)
+}
+
 const copyGen = async () => {
   try { await navigator.clipboard.writeText(genContent.value); ElMessage.success('已复制') }
   catch { ElMessage.error('复制失败') }
+}
+
+const saveLoading = ref(false)
+const saveArticle = async () => {
+  if (!genContent.value) return ElMessage.warning('先点「生成」再保存')
+  saveLoading.value = true
+  try {
+    const r = await fetch(`${API}/api/activities/${route.params.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...act.value, article: genContent.value }),
+    })
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}))
+      return ElMessage.error(e.message || '保存失败')
+    }
+    ElMessage.success('推文已保存')
+    act.value.article = genContent.value
+  } finally {
+    saveLoading.value = false
+  }
 }
 </script>
 
@@ -134,4 +188,6 @@ const copyGen = async () => {
 .detail-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .detail-head h2{margin:0}
 .gen-bar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.article-card{margin-top:16px;background:linear-gradient(180deg,#fbfdff,#fff);border-radius:12px;padding:20px 24px;box-shadow:0 2px 12px rgba(0,0,0,.05)}
+.article-head{margin:0 0 12px;font-size:16px;color:#333}
 </style>

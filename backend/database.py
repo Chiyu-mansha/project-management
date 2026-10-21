@@ -67,6 +67,8 @@ def init_db():
             "max_team_member": "INTEGER DEFAULT 1",
             "max_participants": "INTEGER",
             "status": "TEXT DEFAULT 'draft'",
+            "article": "TEXT",
+            "cover_image": "TEXT",
             "created_at": "TEXT",
         }
         for _c, _t in _need.items():

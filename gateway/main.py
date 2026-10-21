@@ -61,12 +61,22 @@ class RecommendReq(BaseModel):
 
 # ---------- 能力 2：推文关键问题提取 ----------
 
+_STYLE_GUIDE = {
+    "简约": "简洁清晰，少修饰，直说重点",
+    "活泼": "轻松有趣，多用 emoji 和网络用语，有感染力",
+    "正式": "正式得体，用词规范，适合官方通知",
+}
+
+
 @app.post("/api/ai/generate-article")
 def generate_article(req: GenerateArticleReq):
     # 网关不查库，只负责把 member-2 传过来的 activity 对象拼成 Prompt
     a = req.activity or {}
+    guide = _STYLE_GUIDE.get(req.style, _STYLE_GUIDE["简约"])
     prompt = "\n".join([
-        f"请为下面这个活动写一篇「{req.style}」风格的校园推文，用 Markdown 格式：",
+        f"请为下面这个校园活动写一篇「{req.style}」风格的推广推文（{guide}）。",
+        "",
+        "活动信息：",
         f"- 标题：{a.get('title', '')}",
         f"- 主办方：{a.get('organizer', '')}",
         f"- 类型：{a.get('type', '')}",
@@ -76,6 +86,22 @@ def generate_article(req: GenerateArticleReq):
         f"- 综测加分：{a.get('zongce_score', '')}",
         f"- 简介：{a.get('description', '')}",
     ])
+    return {"content": ai_gateway.generate_text(prompt=prompt)}
+
+
+class PolishReq(BaseModel):
+    content: str
+    style: str = "简约"
+
+
+@app.post("/api/ai/polish-article")
+def polish_article(req: PolishReq):
+    """润色：改写已有推文，保持信息不变，只优化表达和排版。"""
+    guide = _STYLE_GUIDE.get(req.style, _STYLE_GUIDE["简约"])
+    prompt = (
+        f"请把下面这段校园推文改写得更「{req.style}」（{guide}），"
+        f"保持信息不变，只优化表达、排版和吸引力，仍用 Markdown 格式：\n\n{req.content}"
+    )
     return {"content": ai_gateway.generate_text(prompt=prompt)}
 
 # ---------- 能力 1：智能答疑（对话） ----------

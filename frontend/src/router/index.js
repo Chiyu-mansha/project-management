@@ -12,6 +12,7 @@ import Register from '../views/Register.vue'
 import Profile from '../views/Profile.vue'
 import Recommend from '../views/Recommend.vue'
 import Notifications from '../views/Notifications.vue'
+import Browse from '../views/Browse.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -19,10 +20,11 @@ const router = createRouter({
     { path: '/', component: Home },
     { path: '/faqs', component: FaqManage },
     { path: '/qa', component: QaChat },
-    { path: '/activities', component: ActivityList },
-    { path: '/activities/new', component: ActivityForm },
+    { path: '/activities', component: ActivityList, meta: { role: 'organizer' } },
+    { path: '/activities/new', component: ActivityForm, meta: { role: 'organizer' } },
     { path: '/activities/:id', component: ActivityDetail },
-    { path: '/activities/:id/edit', component: ActivityForm },
+    { path: '/activities/:id/edit', component: ActivityForm, meta: { role: 'organizer' } },
+    { path: '/browse', component: Browse },
     { path: '/registrations', component: RegistrationEntry },
     { path: '/login', component: Login },
     { path: '/register', component: Register },
@@ -39,6 +41,10 @@ router.beforeEach((to) => {
   }
   if (isPublic && session.value) {
     return { path: '/' }
+  }
+  // 角色限制：organizer 专属页面（发布/编辑/管理），学生/游客跳回活动广场
+  if (to.meta.role === 'organizer' && session.value?.role !== 'organizer') {
+    return { path: '/browse' }
   }
 })
 

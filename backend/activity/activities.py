@@ -55,6 +55,8 @@ class ActIn(BaseModel):
     max_team_member: int = 1                  # 最多人数(含队长)
     max_participants: Optional[int] = None    # 报名上限(队伍数)
     status: Optional[str] = "draft"           # draft/published/ongoing/finished/cancelled
+    article: Optional[str] = ""               # AI 生成的推文 Markdown(v1.5)
+    cover_image: Optional[str] = ""           # 封面图 URL(v1.5,可空)
 
     @model_validator(mode="after")
     def _clear_scores_without_comprehensive(self):
@@ -93,7 +95,8 @@ def _auto_transition(conn):
 _COLUMNS = (
     "title, type, organizer_id, start_time, end_time, location, description, "
     "requirements, tags, has_ticket, comprehensive_score, conduct_score, innovation_score, "
-    "signup_deadline, min_team_member, max_team_member, max_participants, status"
+    "signup_deadline, min_team_member, max_team_member, max_participants, status, "
+    "article, cover_image"
 )
 
 
@@ -102,12 +105,12 @@ def create_activity(body: ActIn):
     conn = get_conn()
     cur = conn.execute(
         f"""INSERT INTO activities ({_COLUMNS})
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (body.title, body.type, body.organizer_id, body.start_time, body.end_time, body.location,
          body.description, body.requirements, body.tags, body.has_ticket,
          body.comprehensive_score, body.conduct_score, body.innovation_score,
          body.signup_deadline, body.min_team_member, body.max_team_member,
-         body.max_participants, body.status),
+         body.max_participants, body.status, body.article, body.cover_image),
     )
     new_id = cur.lastrowid
     conn.commit()
@@ -186,13 +189,13 @@ def update_activity(activity_id: int, body: ActIn):
             title=?, type=?, organizer_id=?, start_time=?, end_time=?, location=?,
             description=?, requirements=?, tags=?, has_ticket=?, comprehensive_score=?,
             conduct_score=?, innovation_score=?, signup_deadline=?, min_team_member=?,
-            max_team_member=?, max_participants=?, status=?
+            max_team_member=?, max_participants=?, status=?, article=?, cover_image=?
             WHERE id=?""",
         (body.title, body.type, body.organizer_id, body.start_time, body.end_time, body.location,
          body.description, body.requirements, body.tags, body.has_ticket,
          body.comprehensive_score, body.conduct_score, body.innovation_score,
          body.signup_deadline, body.min_team_member, body.max_team_member,
-         body.max_participants, body.status, activity_id),
+         body.max_participants, body.status, body.article, body.cover_image, activity_id),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
@@ -244,4 +247,25 @@ def generate_article(activity_id: int, body: ArticleGenReq):
             f"- 时间：{act.get('start_time', '') or '待定'}\n"
             f"- 地点：{act.get('location', '') or '待定'}"
         )
+    return ok({"content": content})
+
+
+class PolishReq(BaseModel):
+    content: str
+    style: str = "简约"
+
+
+@router.post("/{activity_id}/polish-article")
+def polish_article(activity_id: int, body: PolishReq):
+    """润色：调网关改写已有推文，保持信息不变只优化表达。"""
+    try:
+        resp = requests.post(
+            f"{GATEWAY_URL}/api/ai/polish-article",
+            json={"content": body.content, "style": body.style},
+            timeout=75,
+        )
+        resp.raise_for_status()
+        content = resp.json().get("content", body.content)
+    except Exception:
+        content = body.content  # 网关不可用，原样返回
     return ok({"content": content})

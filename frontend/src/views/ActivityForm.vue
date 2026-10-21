@@ -76,6 +76,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { session } from '../auth/session.js'
 
 const API = 'http://localhost:8000'
 const TYPES = ['学科类', '文体类', '科创竞赛', '社会实践']
@@ -132,6 +133,10 @@ const save = async () => {
   if (!form.location.trim()) return ElMessage.error('请填写地点')
   if (!isTeam.value) { form.min_team_member = 1; form.max_team_member = 1 }
   if (form.max_team_member < form.min_team_member) return ElMessage.error('最多人数不能小于最少人数')
+  // 发布者发布活动时自动关联当前登录的 organizer_id
+  if (session.value?.role === 'organizer' && form.organizer_id == null) {
+    form.organizer_id = session.value.id
+  }
   saving.value = true
   try {
     const url = isEdit.value ? `${API}/api/activities/${route.params.id}` : `${API}/api/activities`
