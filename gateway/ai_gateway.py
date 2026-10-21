@@ -19,10 +19,7 @@
 
 扩展：
     recommend(profile, candidates)    -> list  个性化推荐，返回 [{"activity_id", "reason"}]
-
-兼容说明：
-- 保留 member-2 早期签名：generate_text / chat 均支持可选 system 参数
-- 保留 AI_MOCK=true 开关（等价于 USE_REAL_LLM=0，强制 Mock）
+    score_activity(profile, activity) -> dict  AI 打分，返回各项匹配分
 """
 import json
 import os
@@ -39,8 +36,7 @@ BASE_URL = os.getenv(
     "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
 )
 MODEL = os.getenv("LLM_MODEL", "qwen-plus")
-# 与 backend/llm_gateway.py 一致：默认 Mock，显式开关才走真实网关
-# 兼容 member-2 早期写法：AI_MOCK=true 等价于 USE_REAL_LLM=0
+
 if os.getenv("AI_MOCK", "").lower() in ("1", "true", "yes"):
     USE_REAL_LLM = False
 else:
@@ -85,7 +81,6 @@ def gateway_chat(prompt: str) -> str:
 
 def generate_text(prompt: str = None, system: str = None, activity_id: int = None, style: str = None) -> str:
     """推文/文案生成，支持通过 activity_id 和 style 透传上下文，失败自动降级 Mock。"""
-    # 如果传入了 activity_id 和 style，在网关层统一拼装提示词
     if activity_id:
         prompt = f"为活动 id={activity_id} 写一篇"
         if style:
@@ -107,10 +102,7 @@ def generate_text(prompt: str = None, system: str = None, activity_id: int = Non
 # ---------- 能力 2：推文关键问题提取 ----------
 
 def extract_faq(title: str, content: str, count: int = 3) -> list:
-    """读推文标题+正文，提取常见问答，返回 [{"question": str, "answer": str}]。
-
-    用法：推文发布后由 member-2 触发，结果存为待审核 FAQ。
-    """
+    """读推文标题+正文，提取常见问答，返回 [{"question": str, "answer": str}]。"""
     if USE_REAL_LLM:
         try:
             prompt = (
@@ -120,11 +112,10 @@ def extract_faq(title: str, content: str, count: int = 3) -> list:
                 "只返回 JSON 数组，格式：[{\"question\":\"...\",\"answer\":\"...\"}]"
             )
             raw = _chat_completion(prompt, system=SYSTEM_EDITOR)
-            # 清洗 markdown 代码块标记
             clean_raw = raw.replace("```json", "").replace("```", "").strip()
             s, e = clean_raw.find("["), clean_raw.rfind("]") + 1
             if s >= 0 and e > s:
-                data = json.loads(clean_raw[s:e]) # 注意这里改用 clean_raw
+                data = json.loads(clean_raw[s:e])
                 return [
                     {"question": str(i.get("question", "")).strip(), "answer": str(i.get("answer", "")).strip()}
                     for i in data
@@ -132,7 +123,6 @@ def extract_faq(title: str, content: str, count: int = 3) -> list:
                 ][:count]
         except Exception:
             pass
-    # Mock / 解析失败兜底：模板问答，保证流程不断
     return [
         {"question": f"{title}什么时候开始？", "answer": "见推文中的时间安排，详情咨询主办方。"},
         {"question": f"{title}怎么报名？", "answer": "在活动详情页点击报名即可。"},
@@ -143,12 +133,7 @@ def extract_faq(title: str, content: str, count: int = 3) -> list:
 # ---------- 能力 3：同义词 / 相似问题匹配 ----------
 
 def similar_question(question: str, candidates: list) -> int:
-    """判断 question 是否与 candidates 里的某个问题同义。
-
-    candidates 为问题字符串列表。
-    返回最相似候选的下标；都不相似返回 -1。
-    用于「高频问题沉淀」：把不同问法归为同一类。
-    """
+    """判断 question 是否与 candidates 里的某个问题同义。"""
     if not candidates:
         return -1
     if USE_REAL_LLM:
@@ -159,14 +144,12 @@ def similar_question(question: str, candidates: list) -> int:
                 f"只返回最匹配的编号数字，没有则返回 -1。\n{listing}"
             )
             raw = _chat_completion(prompt, system="你是中文语义匹配助手。").strip()
-            # 严格匹配纯数字（允许负号），确保拿到的是 -1 而不是 1
             if re.fullmatch(r"-?\d+", raw):
                 idx = int(raw)
                 return idx if 0 <= idx < len(candidates) else -1
-            return -1 # 格式不对直接降级返回 -1，而不是抛出异常
+            return -1
         except Exception:
             pass
-    # Mock：退化为包含匹配
     norm = lambda s: "".join(ch for ch in s if ch.isalnum())
     q = norm(question)
     for i, c in enumerate(candidates):
@@ -179,11 +162,7 @@ def similar_question(question: str, candidates: list) -> int:
 # ---------- 能力 1：智能答疑（对话） ----------
 
 def chat(question: str, system: str = None, activity_id: int = None) -> dict:
-    """输入问题，返回 {"answer": str, "source": "llm"|"mock"}；可传 system 覆盖默认人设。
-    
-    增加 activity_id 参数：用于指定当前讨论的是哪个活动，确保大模型回答有上下文。
-    """
-    # 如果有 activity_id，在提问时加上上下文，这样模型才知道问的是哪个活动
+    """输入问题，返回 {"answer": str, "source": "llm"|"mock"}。"""
     if activity_id:
         question = f"【当前活动ID：{activity_id}】关于该活动的问题：{question}"
         
@@ -193,7 +172,6 @@ def chat(question: str, system: str = None, activity_id: int = None) -> dict:
         try:
             return {"answer": _chat_completion(question, system=sys_prompt), "source": "llm"}
         except Exception as e:
-            # 强制打印真实错误，方便排查
             print(f"\n❌ 真实 API 调用失败，错误原因: {repr(e)}\n")
             return {"answer": f"[真实网关失败，已降级Mock] {e}", "source": "mock"}
             
@@ -206,7 +184,7 @@ def chat(question: str, system: str = None, activity_id: int = None) -> dict:
 # ---------- 扩展：个性化推荐 ----------
 
 def recommend(profile: dict, candidates: list) -> list:
-    """输入用户画像和候选活动，返回 [{"activity_id", "reason"}]。MVP 先走规则。"""
+    """输入用户画像和候选活动，返回 [{"activity_id", "reason"}]。"""
     try:
         if USE_REAL_LLM:
             return _recommend_by_llm(profile, candidates)
@@ -216,7 +194,6 @@ def recommend(profile: dict, candidates: list) -> list:
 
 
 def _recommend_by_llm(profile: dict, candidates: list) -> list:
-    # TODO: 用 LLM 输出 JSON 推荐理由；MVP 先走规则
     return _mock_recommend(profile, candidates)
 
 
@@ -229,18 +206,90 @@ def _mock_recommend(profile: dict, candidates: list) -> list:
     return result
 
 
+# ---------- 扩展：AI 打分 ----------
+
+def score_activity(profile: dict, activity: dict) -> dict:
+    """输入用户画像和单个活动，返回各项匹配分及是否满足报名条件（纯数据）。"""
+    if not USE_REAL_LLM:
+        return _mock_score(profile, activity)
+
+    sys_prompt = (
+        "你是一个专业的校园活动匹配打分助手。你需要根据用户画像和活动信息，输出严格的 JSON 格式打分。"
+        "打分规则：\n"
+        "1. eligible: 是否满足报名条件(0 或 10)。如果活动有硬性专业/年级要求且不符，返回0；否则返回10。\n"
+        "2. scores.major: 专业匹配度(0-10)。\n"
+        "3. scores.interests: 兴趣匹配度(0-10)。根据 profile.interests 和 activity.tags 的交集判断。\n"
+        "4. scores.skills: 技能匹配度(0-10)。\n"
+        "5. scores.comprehensive/conduct/innovation: 积分命中(0 或 10)。如果用户需要该积分(值为1)且活动提供该积分(值>0)，则返回10，否则返回0。\n"
+        "必须严格只返回 JSON 对象，不要包含 markdown 标记或多余文字。"
+    )
+    
+    user_prompt = f"""
+【用户画像】
+专业: {profile.get('major', '未知')}
+年级: {profile.get('grade', '未知')}
+兴趣: {profile.get('interests', '无')}
+技能: {profile.get('skills', '无')}
+需要的积分: 综测={profile.get('need_comprehensive_score', 0)}, 品行={profile.get('need_conduct_score', 0)}, 创新={profile.get('need_innovation_score', 0)}
+
+【活动信息】
+标题: {activity.get('title', '')}
+类型: {activity.get('type', '')}
+标签: {activity.get('tags', '')}
+描述: {activity.get('description', '')}
+报名条件: {activity.get('requirements', '')}
+提供的积分: 综测={activity.get('comprehensive_score', 0)}, 品行={activity.get('conduct_score', 0)}, 创新={activity.get('innovation_score', 0)}
+
+请输出打分 JSON，格式示例：
+{{
+  "eligible": 10,
+  "scores": {{
+    "major": 9,
+    "interests": 8,
+    "skills": 8,
+    "conduct": 0,
+    "innovation": 10,
+    "comprehensive": 10
+  }}
+}}
+"""
+
+    try:
+        raw = _chat_completion(user_prompt, system=sys_prompt)
+        clean_raw = raw.replace("```json", "").replace("```", "").strip()
+        s, e = clean_raw.find("{"), clean_raw.rfind("}") + 1
+        if s >= 0 and e > s:
+            data = json.loads(clean_raw[s:e])
+            data["source"] = "llm"
+            return data
+        raise ValueError("大模型未返回合法的 JSON 结构")
+    except Exception as e:
+        print(f"\n❌ AI 打分失败，降级 Mock: {e}\n")
+        return _mock_score(profile, activity)
+
+
+def _mock_score(profile: dict, activity: dict) -> dict:
+    """大模型失败时的兜底打分逻辑（基于简单规则）"""
+    interests = profile.get("interests", "").split(",")
+    tags = activity.get("tags", "").split(",")
+    has_common = any(i.strip() in tags for i in interests if i.strip())
+    
+    return {
+        "eligible": 10,
+        "scores": {
+            "major": 8 if has_common else 5,
+            "interests": 9 if has_common else 5,
+            "skills": 5,
+            "conduct": 10 if profile.get("need_conduct_score") and activity.get("conduct_score", 0) > 0 else 0,
+            "innovation": 10 if profile.get("need_innovation_score") and activity.get("innovation_score", 0) > 0 else 0,
+            "comprehensive": 10 if profile.get("need_comprehensive_score") and activity.get("comprehensive_score", 0) > 0 else 0
+        },
+        "source": "mock"
+    }
+
+
 if __name__ == "__main__":
     import sys
-
-    sys.stdout.reconfigure(encoding="utf-8")  # Windows GBK 控制台也能打印
-    print("=== gateway_chat（默认 Mock）===")
-    print(gateway_chat("测试活动：篮球赛"))
-    print("\n=== chat 智能答疑（默认 Mock）===")
-    print(chat("活动什么时候开始？"))
-    print("\n=== extract_faq 推文提取（默认 Mock）===")
-    print(extract_faq("编程马拉松报名启动", "10月20日截止，3-5人组队，有综测加分。"))
-    print("\n=== similar_question 同义匹配（默认 Mock）===")
-    cands = ["报名截止什么时候", "在哪里举办"]
-    print(similar_question("什么时候不能报名了", cands))
-    print("\n=== recommend（默认 Mock）===")
-    print(recommend({"interests": "篮球"}, [{"id": 1, "tags": "篮球"}, {"id": 2, "tags": "讲座"}]))
+    sys.stdout.reconfigure(encoding="utf-8")
+    print("=== score_activity（默认 Mock）===")
+    print(score_activity({"interests": "算法,竞赛"}, {"title": "软件创新大赛", "tags": "算法,Python"}))

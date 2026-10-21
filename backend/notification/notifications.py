@@ -1,18 +1,18 @@
 """通知推送模块（POD-1 / member-1）
 
 接口（接口文档 v1.0 定稿）：
-- GET  /api/notifications                   我的通知列表（分页）
-- POST /api/notifications                   创建通知（POD-2 报名成功时内部调用）
-- PUT  /api/notifications/{id}/read         标记已读
-- POST /api/notifications/check-deadlines   截止前 24h 预警扫描（MVP 手动触发，第 4 周加定时任务）
-
-返回统一为 {"code":0,"data":...}，与接口文档通用约定一致。
+- GET  /api/notifications                   我的通知列表（分页，需登录）
+- GET  /api/notifications/unread-count      获取未读通知数量（需登录）
+- POST /api/notifications                   创建通知（供内部调用，无需用户 Token）
+- PUT  /api/notifications/{id}/read         标记已读（需登录）
+- POST /api/notifications/check-deadlines   截止前 24h 预警扫描（手动触发/定时任务）
 """
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 
 import db
+from auth import get_current_user
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
@@ -28,10 +28,11 @@ class NotificationCreateReq(BaseModel):
 
 @router.get("")
 def list_my_notifications(
-    user_id: int = Query(..., description="当前用户 id（MVP 简化，等 POD-2 认证上线后从 token 取）"),
+    user: dict = Depends(get_current_user),  # 从 Token 解析用户
     page: int = 1,
     page_size: int = 20,
 ):
+    user_id = user["id"]
     offset = (page - 1) * page_size
     rows = db.query_all(
         """
@@ -51,8 +52,18 @@ def list_my_notifications(
     return {"code": 0, "data": {"items": [dict(r) for r in rows], "total": total}}
 
 
+@router.get("/unread-count")
+def get_unread_count(user: dict = Depends(get_current_user)):
+    row = db.query_one(
+        "SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND is_read = 0",
+        (user["id"],),
+    )
+    return {"code": 0, "data": {"count": row["n"] if row else 0}}
+
+
 @router.post("")
 def create_notification(req: NotificationCreateReq):
+    """内部接口：供 POD-2 报名成功、或系统定时任务调用，不校验用户 Token。"""
     if req.type not in ALLOWED_TYPES:
         raise HTTPException(status_code=400, detail=f"type 必须为 {ALLOWED_TYPES} 之一")
     db.execute(
@@ -74,13 +85,14 @@ def create_notification(req: NotificationCreateReq):
 
 
 @router.put("/{notification_id}/read")
-def mark_as_read(notification_id: int):
+def mark_as_read(notification_id: int, user: dict = Depends(get_current_user)):
+    # 只能标记自己的通知
     existing = db.query_one(
-        "SELECT id FROM notifications WHERE id = ?",
-        (notification_id,),
+        "SELECT id FROM notifications WHERE id = ? AND user_id = ?",
+        (notification_id, user["id"]),
     )
     if existing is None:
-        raise HTTPException(status_code=404, detail="通知不存在")
+        raise HTTPException(status_code=404, detail="通知不存在或无权操作")
 
     db.execute(
         "UPDATE notifications SET is_read = 1 WHERE id = ?",
@@ -96,17 +108,9 @@ def mark_as_read(notification_id: int):
     return {"code": 0, "data": dict(row)}
 
 
-# ---------- 截止前 24h 预警 ----------
-# 设计说明（做法 B：业务逻辑与触发方式分离）：
-#   - _do_check_deadlines() 是纯业务逻辑，无 HTTP 依赖，第 4 周定时任务可直接 import 调用
-#   - /check-deadlines 是 HTTP 包装，MVP 阶段供手动触发 / 测试
-#   - 未来加 APScheduler 时，只需 scheduler.add_job(_do_check_deadlines, ...)，本文件不动
+# ---------- 截止前 24h 预警（供定时任务调用） ----------
 
 def _do_check_deadlines() -> int:
-    """扫描所有 published 活动，为已报名学生生成 24h 截止预警通知，返回新生成条数。
-
-    幂等：同一 (user_id, activity_id, content) 已存在则跳过，重复触发不会重复插入。
-    """
     rows = db.query_all(
         """
         SELECT a.id AS activity_id, a.title, r.user_id
@@ -143,5 +147,4 @@ def _do_check_deadlines() -> int:
 
 @router.post("/check-deadlines")
 def check_deadlines():
-    """手动触发 24h 截止预警扫描。响应：{"code":0, "data":{"created": N}}"""
     return {"code": 0, "data": {"created": _do_check_deadlines()}}
