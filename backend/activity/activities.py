@@ -7,6 +7,7 @@
 - PUT    /api/activities/{id}   编辑/变更
 """
 import os
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -24,15 +25,17 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
 def _trigger_faq_extract(activity_id: int):
-    """发布/编辑活动后触发 FAQ 自动提取（成员3 的接口），失败不影响发布。"""
-    try:
-        requests.post(
-            f"{BACKEND_URL}/api/faqs/from-activity",
-            json={"activity_id": activity_id},
-            timeout=75,
-        )
-    except Exception:
-        pass
+    """发布/编辑活动后【异步】触发 FAQ 自动提取（成员3 的接口），失败不影响发布。"""
+    def _run():
+        try:
+            requests.post(
+                f"{BACKEND_URL}/api/faqs/from-activity",
+                json={"activity_id": activity_id},
+                timeout=75,
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
 
 
 class ActIn(BaseModel):
@@ -126,11 +129,17 @@ def list_activities(
     tags: Optional[str] = None,
     keyword: Optional[str] = None,
     status: Optional[str] = None,
+    ids: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
 ):
-    """活动列表：支持类型/标签/关键词/状态筛选 + 分页。"""
+    """活动列表：支持类型/标签/关键词/状态/ID批量筛选 + 分页。"""
     where, params = [], []
+    if ids:
+        id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+        if id_list:
+            where.append(f"id IN ({','.join('?' * len(id_list))})")
+            params.extend(id_list)
     if type:
         where.append("type = ?")
         params.append(type)
