@@ -25,6 +25,7 @@ from scheduler import start_scheduler  # 新增定时任务导入
 import db
 from auth_routes import router as auth_router
 from profile import router as profile_router
+from account import router as account_router
 from recommend import router as recommend_router
 from forms import router as forms_router
 from registrations import router as registrations_router
@@ -62,6 +63,7 @@ app.include_router(notifications_router)
 # ---- POD-2:认证/画像/推荐 + 报名域(POD-1 正式活动接口已合入) ----
 app.include_router(auth_router)
 app.include_router(profile_router)
+app.include_router(account_router)
 app.include_router(recommend_router)
 app.include_router(forms_router)
 app.include_router(registrations_router)
