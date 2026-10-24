@@ -5,6 +5,7 @@
 - 前端:Vue 3 + Vite + Element Plus
 - 后端:Python FastAPI
 - 数据库:SQLite(MVP)
+- 认证:统一认证域提供的简单 token,POD-3 不签发或解析 JWT
 
 ## 快速开始
 
@@ -35,7 +36,8 @@ npm run dev
 ```
 backend/
   main.py          # FastAPI 入口(含 CORS、/api/hello)
-  schema.sql       # 五张核心表建表语句
+  schema.sql       # 全组共享 SQLite schema
+  pod3_schema.sql  # POD-3 自有流程表(schema 不创建 users/activities)
   requirements.txt
 frontend/
   src/App.vue      # 入口页面(内置后端连通检测)
@@ -46,6 +48,13 @@ frontend/
 - 每个人在自己的 `podN/member-X` 分支开发
 - 提 PR 合到本 POD 的 `podN/00-xxx` 合并分支
 - 每周由组长把合并分支合入 `main`
+
+## POD-3 联调配置
+
+- `POD3_DB_PATH` 指向全组共享 SQLite 数据库,默认是 `campus.db`。
+- `AUTH_SERVICE_URL` 配置认证域地址。请求中的 Bearer 值是简单 token,由认证域校验。
+- `ACTIVITY_SERVICE_URL` 配置活动域地址;未配置时只从共享 SQLite 的 `activities` 表读取。
+- POD-3 不创建或写入 `users`、`activities` 表,只写凭证域及其流程表。
 
 ## AI 能力
 
