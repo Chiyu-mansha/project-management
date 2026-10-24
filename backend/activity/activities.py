@@ -141,8 +141,13 @@ def list_activities(
         where.append("(title LIKE ? OR description LIKE ?)")
         params += [f"%{keyword}%", f"%{keyword}%"]
     if status:
-        where.append("status = ?")
-        params.append(status)
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            where.append("status = ?")
+            params.append(statuses[0])
+        else:
+            where.append(f"status IN ({','.join('?' * len(statuses))})")
+            params.extend(statuses)
     else:
         # 默认隐藏已取消的活动（想查看时传 status=cancelled）
         where.append("status != 'cancelled'")

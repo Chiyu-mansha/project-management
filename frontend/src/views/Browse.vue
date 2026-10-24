@@ -51,7 +51,7 @@ const fmtTime = (s) => (s ? String(s).replace('T', ' ').slice(0, 16) : '时间�
 async function load() {
   loading.value = true
   try {
-    const data = await request('/activities', { query: { status: 'published', page_size: 100 } })
+    const data = await request('/activities', { query: { status: 'published,ongoing', page_size: 100 } })
     rows.value = data.items || []
   } catch {
     rows.value = []

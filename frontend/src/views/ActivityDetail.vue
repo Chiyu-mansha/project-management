@@ -32,7 +32,6 @@
       <el-descriptions-item label="简介" :span="2">{{ act.description || '-' }}</el-descriptions-item>
     </el-descriptions>
     <div v-if="act.article" class="article-card">
-      <h3 class="article-head">📄 活动推文</h3>
       <MdPreview :modelValue="act.article" />
     </div>
     <ActivityRegistrationActions v-if="act.id" :activity="act" :session="session"
@@ -188,6 +187,20 @@ const saveArticle = async () => {
 .detail-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
 .detail-head h2{margin:0}
 .gen-bar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-.article-card{margin-top:16px;background:linear-gradient(180deg,#fbfdff,#fff);border-radius:12px;padding:20px 24px;box-shadow:0 2px 12px rgba(0,0,0,.05)}
-.article-head{margin:0 0 12px;font-size:16px;color:#333}
+.article-card{margin-top:16px;background:#fff;border-radius:16px;padding:32px 40px 28px;box-shadow:0 4px 20px rgba(0,0,0,.08);position:relative;overflow:hidden}
+.article-card::before{content:'';position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,#3a5bff,#8b5cf6,#ec4899)}
+/* 微信文章风格 */
+.article-card :deep(h1){text-align:center;font-size:24px;font-weight:800;margin:22px 0 12px;color:#1f2937;line-height:1.4}
+.article-card :deep(h2){text-align:center;font-size:18px;font-weight:700;margin:24px 0 14px;color:#303133;position:relative}
+.article-card :deep(h2)::after{content:'';display:block;width:40px;height:3px;margin:8px auto 0;background:linear-gradient(90deg,#3a5bff,#8b5cf6);border-radius:2px}
+.article-card :deep(h3){font-size:16px;font-weight:700;color:#3a5bff;border-left:4px solid #3a5bff;padding-left:10px;margin:18px 0 10px}
+.article-card :deep(p){line-height:1.9;margin:12px 0;color:#333;font-size:15px}
+.article-card :deep(strong){color:#d4380d;font-weight:700}
+.article-card :deep(blockquote){margin:16px 0;padding:16px 20px;background:linear-gradient(135deg,#eef2ff,#f5f3ff);border-left:4px solid #3a5bff;border-radius:8px;color:#4b5563;font-size:15px}
+.article-card :deep(img){max-width:100%;border-radius:12px;display:block;margin:16px auto;box-shadow:0 4px 16px rgba(0,0,0,.1)}
+.article-card :deep(ul),.article-card :deep(ol){padding-left:22px;margin:10px 0}
+.article-card :deep(li){margin:8px 0;line-height:1.7}
+.article-card :deep(li)::marker{color:#3a5bff}
+.article-card :deep(hr){border:none;height:1px;background:linear-gradient(90deg,transparent,#c7d2fe,transparent);margin:24px 0}
+.article-card :deep(code){background:#f5f5f5;border-radius:4px;padding:2px 6px;font-size:13px;color:#c7254e}
 </style>
