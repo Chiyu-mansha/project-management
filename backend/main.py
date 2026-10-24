@@ -20,6 +20,7 @@ from database import init_db as init_db_pod1
 from activity import activity_router
 from faq import faqs_router, faqs_auto_router, qa_router
 from notification import notifications_router
+from scheduler import start_scheduler  # 新增定时任务导入
 
 import db
 from auth_routes import router as auth_router
@@ -86,6 +87,7 @@ async def upload_image(file: UploadFile = File(...)):
 @app.on_event("startup")
 def startup() -> None:
     db.init_db()
+    start_scheduler()  # 新增：启动定时任务
 
 
 @app.exception_handler(HTTPException)

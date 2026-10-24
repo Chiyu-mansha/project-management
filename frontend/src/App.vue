@@ -1,11 +1,38 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { session, clearSession } from './auth/session.js'
+import { createApiClient } from './api/request'
+import { createNotificationApi } from './api/notifications'
+
 const router = useRouter()
 const route = useRoute()
 const isAuthPage = computed(() => route.path === '/login' || route.path === '/register')
 function logout() { clearSession(); router.push('/') }
+
+// --- 未读消息逻辑 ---
+const unreadCount = ref(0)
+const request = createApiClient({ getToken: () => session.value?.token || '' })
+const api = createNotificationApi(request)
+
+async function fetchUnread() {
+  if (!session.value) {
+    unreadCount.value = 0
+    return
+  }
+  try {
+    const data = await api.unreadCount()
+    unreadCount.value = data.count
+  } catch (e) {
+    // 忽略错误
+  }
+}
+
+// 监听路由变化，每次切换页面刷新一下未读数
+watch(() => route.path, () => {
+  fetchUnread()
+})
+onMounted(fetchUnread)
 </script>
 
 <template>
@@ -21,7 +48,9 @@ function logout() { clearSession(); router.push('/') }
       <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
       <el-button link @click="$router.push('/faqs')">📚 FAQ 知识库</el-button>
       <el-button link @click="$router.push('/qa')">💬 智能答疑</el-button>
-      <el-button link @click="$router.push('/notifications')">🔔 通知中心</el-button>
+      <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
+        <el-button link @click="$router.push('/notifications')">🔔 通知中心</el-button>
+      </el-badge>
       <span v-if="session" class="session-info">{{ session.role === 'student' ? '学生' : '发布者' }} #{{ session.id }}</span>
       <el-button v-if="!session" link type="primary" @click="$router.push('/login')">🔑 登录</el-button>
       <el-button v-else link @click="logout">退出</el-button>

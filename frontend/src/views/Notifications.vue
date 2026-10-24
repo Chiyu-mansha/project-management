@@ -46,12 +46,11 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { createApiClient } from '../api/request'
 import { createNotificationApi } from '../api/notifications'
+import { session } from '../auth/session.js'
 
-// MVP 阶段：POD-2 认证域未上线，先返回占位 token（后端目前不校验）。
-// 等 POD-2 认证上线后，改成从 localStorage 或 token store 里取真实 token。
-const CURRENT_USER_ID = 1
+// 使用真实的登录 token
 const request = createApiClient({
-  getToken: () => 'temp-mock-token',
+  getToken: () => session.value?.token || '',
 })
 const api = createNotificationApi(request)
 
@@ -64,7 +63,7 @@ const loading = ref(false)
 async function load() {
   loading.value = true
   try {
-    const data = await api.list(CURRENT_USER_ID, page.value, pageSize.value)
+    const data = await api.list(page.value, pageSize.value)
     list.value = data.items
     total.value = data.total
   } catch (e) {
@@ -80,6 +79,7 @@ async function handleRead(item) {
     const data = await api.markRead(item.id)
     item.is_read = data.is_read
     ElMessage.success('已标记为已读')
+    // 可选：触发一个全局事件让 App.vue 更新角标
   } catch (e) {
     ElMessage.error(e.message || '操作失败')
   }
