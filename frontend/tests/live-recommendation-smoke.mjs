@@ -50,9 +50,10 @@ await cards.load(first.items)
 assert.equal(cards.error.value, '')
 assert.deepEqual(cards.displayItems.value.map(item => item.activity.id), first.items.map(item => item.activity_id))
 assert.deepEqual(cards.displayItems.value[0].reasons, first.items[0].reasons)
+assert.match(first.items[0].reasons[0], /^专业匹配得分\d+(\.\d+)?\/10$/)
 const reward = await rec.list({ need_conduct_score: 1 })
 assert.equal(reward.total, 26) // Fixture uses 0.5 conduct points, interpreted by the gateway as eligible.
-assert.ok(reward.items.every(item => item.reasons.includes('可加操行分')))
+assert.ok(reward.items.every(item => item.reasons.length === 0)) // member-1: only matching dimensions produce reasons.
 const noMatch = await rec.list({ need_innovation_score: 1 })
 assert.equal(noMatch.total, 0)
 
@@ -73,6 +74,10 @@ const signup = await registrations.submitRegistration(id, { extra_fields: { team
   { role: 'captain', member_extra: { student_id: 'S1', name: '示例队长' } }
 ] } })
 assert.ok((await registrations.getMyRegistrations(1)).items.some(item => item.registration_id === signup.registration_id))
+const signupNotice = (await createNotificationApi(student).list()).items.find(item => item.activity_id === id)
+assert.ok(signupNotice, 'signup must trigger a real internal HTTP notification')
+assert.equal(signupNotice.type, '报名提醒')
+assert.match(signupNotice.content, /成功报名/)
 await registrations.cancelRegistration(signup.registration_id)
 
 const notifications = createNotificationApi(student)
@@ -86,4 +91,4 @@ await profileApi.updateProfile(1, { ...saved, skills: 'force_gateway_error' })
 await assert.rejects(rec.score(), error => error.code === 502)
 await profileApi.updateProfile(1, saved)
 assert.equal((await rec.score()).scored, 28)
-console.log('PASS: real auth/profile (PUT then GET), empty-profile/role errors, score/list, filters/order/reasons/pagination, POD-1 batch cards, published+ongoing browse, detail → registration → cancellation, private notification list/read, scoring 502 and recovery. AI scores are local fixtures, not live LLM validation.')
+console.log('PASS: real auth/profile (PUT then GET), empty-profile/role errors, score/list, filters/scored reasons/order/pagination, POD-1 batch cards, published+ongoing browse, detail → registration → real internal HTTP notification → cancellation, private notification list/read, scoring 502 and recovery. AI scores are local fixtures, not live LLM validation.')

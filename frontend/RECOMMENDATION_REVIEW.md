@@ -1,6 +1,6 @@
 # 陈珑珑：本周前端交付与 Review（2026-10-25）
 
-对应飞书 POD-2 文档第 4–6 部分及 POD-1「推荐结果展示」回复。本次功能改动限前端。分支 `pod2/member-2`，PR 目标 `pod2/00-student-participation`；保留原 PR #6 供 Review，未直接合并目标分支。
+对应飞书 POD-2 文档第 4–6 部分及 POD-1「推荐结果展示」回复。分支 `pod2/member-2`，PR 目标 `pod2/00-student-participation`；前端实现提交为 `1d43c79`。当日后续用户授权将 member-1 和 member-2 合入 00，合并前联合验证的补充结果见文末。
 
 ## 改动及入口
 
@@ -61,4 +61,11 @@ node tests/live-recommendation-smoke.mjs
 
 原报名回归使用另一份全新临时库：终端 A 执行 `python tests/serve-backend.py --port 8012`，终端 C 执行 `node tests/live-api-smoke.mjs`。
 
-仍需后端配合：报名成功后通知绑定、真实网关部署/算法优化、旧评分快照清理。前端会过滤当前不可报名的卡片，但无法修复后端快照导致的候选总数偏差或资格变化；这些不计入本次前端完成项。
+首次前端交付时的后端配合项为通知绑定、真实网关部署/算法优化和旧评分快照清理；通知绑定已在下述 member-1 联合验证中补齐。前端会过滤当前不可报名的卡片，但无法修复后端快照导致的候选总数偏差或资格变化；这些不计入本次前端完成项。
+
+## member-1 / member-2 合并前联合验证（2026-10-25）
+
+- 吸收 member-1 原始提交 `9bbf6316b6538b11e4bd55909bed204c3caa16d9`，保留报名成功向全队成员内部 HTTP 创建通知、匹配维度理由带分值的实现。积分需求单独勾选时不返回匹配理由。已有前端直接显示服务端理由。
+- `serve-backend.py` 将 `BACKEND_BASE_URL` 指向自身临时端口。`live-api-smoke.mjs` 新增验证队长/队员分别收到一条报名通知，重复报名不增发；`live-recommendation-smoke.mjs` 验证分值理由及推荐→报名→真实内部 HTTP 通知链路。
+- 联合代码 37/37 前端测试、生产构建和两组实际后端测试全部通过。通知创建使用真实后端接口及临时 SQLite；AI 分值仍为本地 HTTP 夹具，未验证真实 LLM 或团队部署环境。
+- 合并方式：member-1 与 member-2 各自通过 PR 合入 `pod2/00-student-participation`，保留两边原始 commit 历史；PR 最终状态、合并 hash 和页面截图直接交给用户。没有改写飞书周报。

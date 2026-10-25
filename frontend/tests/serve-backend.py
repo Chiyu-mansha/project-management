@@ -17,6 +17,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--port', type=int, default=8012)
 parser.add_argument('--recommendations', action='store_true', help='Add recommendation fixtures and a local deterministic HTTP scoring gateway; never calls a real AI provider.')
 args = parser.parse_args()
+# Exercise member-1's internal notification HTTP call against this disposable backend.
+os.environ['BACKEND_BASE_URL'] = f'http://127.0.0.1:{args.port}'
 backend = Path(__file__).resolve().parents[2] / 'backend'
 sys.path.insert(0, str(backend))
 
