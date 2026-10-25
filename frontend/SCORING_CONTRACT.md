@@ -1,6 +1,6 @@
 # 画像、推荐与评分：前端交接 v0.1
 
-本轮是 POD-2 第三周设计契约交付。报名联调的已实现代码与验证见 [MEMBER2_REVIEW.md](MEMBER2_REVIEW.md)。此文件不表示画像/推荐路由、AI 网关或评分存储已经上线；这些能力不接入当前生产导航。
+本轮是 POD-2 第三周设计契约交付。报名联调的已实现代码与验证见 [MEMBER2_REVIEW.md](MEMBER2_REVIEW.md)。画像/推荐路由与评分存储（`activity_scores` 表）已实现并接入导航（`/profile`、`/recommend`）；AI 打分网关 `/api/ai/score` 由 POD-1 实现，尚未上线。
 
 ## 前端字段与业务 API
 
@@ -34,7 +34,7 @@
 POD-2 业务后端调用网关；浏览器不直连大模型、不持有网关密钥。评分路径 `/api/ai/score` 是讨论稿占位，正式名称由 POD-1 确认。请求为 `{profile,activity}`，专业/兴趣/技能分为 0～10；积分需求是否命中用 0/10 表达。网关返回纯数据，由业务后端包装一次 code/data。
 
 ```json
-{"eligible":true,"scores":{"major":9,"interests":8,"skills":8,"conduct":0,"innovation":10,"comprehensive":10},"source":"llm"}
+{"eligible":10,"scores":{"major":9,"interests":8,"skills":8,"conduct":0,"innovation":10,"comprehensive":10},"source":"llm"}
 ```
 
 ## 页面状态约定
@@ -49,4 +49,4 @@ POD-2 业务后端调用网关；浏览器不直连大模型、不持有网关�
 | 无候选活动 | items=[]、total=0，显示空状态 |
 | 登录失效 | 清理共享会话，关闭个人数据弹窗 |
 
-待跨 POD 定稿：评分状态通过哪个业务 API 返回、网关异常状态/超时、部分权重归一与并列排序、评分结果持久化和重算策略。未定稿状态码不由前端自造；新增表/接口仍走讨论区审批。
+已定稿：评分结果持久化到 `activity_scores` 表、评分接口 `POST /api/recommend/score`（点推荐页触发全量重打分）、权重归一 0.4/0.3/0.3、前 50% 阈值（综合分 ≥ 选中权重总分×50%）、并列按综合分降序→活动 ID 降序。仍待定稿：网关异常状态码/超时时间。未定稿状态码不由前端自造。

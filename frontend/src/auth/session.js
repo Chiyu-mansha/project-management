@@ -1,5 +1,12 @@
 import { readonly, shallowRef } from 'vue'
 
+const STORAGE_KEY = 'pod2.session'
+
+function getStorage() {
+  // 测试(Node)环境没有 localStorage，返回 null
+  return typeof localStorage !== 'undefined' ? localStorage : null
+}
+
 export function normalizeSession(value) {
   if (value == null) return null
   const role = typeof value.role === 'string' ? value.role.toLowerCase() : ''
@@ -11,13 +18,25 @@ export function normalizeSession(value) {
   return Object.freeze({ token: value.token, role, id })
 }
 
-// Login owns credentials. Keep one in-memory session across routes; never create a token here.
+// 登录态存内存 + localStorage，刷新页面后仍保持登录；退出时清除
 export function createSessionStore() {
-  const current = shallowRef(null)
+  let initial = null
+  try {
+    const raw = getStorage()?.getItem(STORAGE_KEY)
+    if (raw) initial = normalizeSession(JSON.parse(raw))
+  } catch {}
+
+  const current = shallowRef(initial)
   return {
     session: readonly(current),
-    setSession(value) { current.value = normalizeSession(value) },
-    clearSession() { current.value = null }
+    setSession(value) {
+      current.value = normalizeSession(value)
+      try { getStorage()?.setItem(STORAGE_KEY, JSON.stringify(current.value)) } catch {}
+    },
+    clearSession() {
+      current.value = null
+      try { getStorage()?.removeItem(STORAGE_KEY) } catch {}
+    }
   }
 }
 

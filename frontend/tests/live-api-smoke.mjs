@@ -4,14 +4,15 @@ import { createApiClient } from '../src/api/request.js'
 import { createRegistrationApi } from '../src/api/registrations.js'
 
 const baseUrl = 'http://127.0.0.1:8012/api'
-async function client(role, id) {
+const SMOKE_PASSWORD = 'smoke123'
+async function login(role, account) {
   const publicRequest = createApiClient({ baseUrl })
-  const { token } = await publicRequest('/dev/token', { method: 'POST', body: { role, id }, authRequired: false })
+  const { token } = await publicRequest('/auth/login', { method: 'POST', body: { role, account, password: SMOKE_PASSWORD }, authRequired: false })
   return createRegistrationApi(createApiClient({ baseUrl, getToken: () => token }))
 }
-const owner = await client('organizer', 10)
-const captain = await client('student', 1)
-const member = await client('student', 2)
+const owner = await login('organizer', 'review')
+const captain = await login('student', 'S1')
+const member = await login('student', 'S2')
 const schema = {
   form_team_schema: [{ field_key: 'project_name', label: '项目名称', type: 'text', required: true }],
   form_member_schema: [

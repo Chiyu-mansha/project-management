@@ -1,7 +1,9 @@
--- 校园活动智能通知&报名助理 数据库 schema v1.3
--- SQLite 版本;与飞书《数据库 Schema v1.3》文档保持一致
+-- 校园活动智能通知&报名助理 数据库 schema v1.5
+-- SQLite 版本;与飞书《数据库 Schema v1.5》文档保持一致
 -- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
+-- v1.5 备注(10-20 变更申请):activities 新增 article(AI推文展示)、cover_image(卡片流封面)(POD-1 申请,PM 批准)
 -- v1.3 备注(10-11 变更申请):faqs 改 status 枚举 published/draft、category 按活动类型口径、新增 origin_title;新增 qa_logs 表(POD-1 申请,PM 批准)
+-- v1.4 备注(10-19 新增):新增 activity_scores 打分结果表(POD-2 登录/画像/推荐,记录用户-比赛-各项得分)
 -- 10-12 修正(POD-2 指出):时间默认值 datetime(now) → datetime('now'),不加引号会被 SQLite 当列名解析为 NULL
 -- v1.2 备注(10-11 拍板):activities.status 增加 cancelled(POD-1 提案,PM 拍板)
 -- v1.1 备注(10-11 复议):activities 报名截止字段回退为 signup_deadline
@@ -56,6 +58,8 @@ CREATE TABLE activities (
     max_team_member INTEGER NOT NULL,       -- 队伍最多人数(含队长,发布时设置)
     max_participants INTEGER,               -- 报名上限(队数,空=不限)
     status TEXT DEFAULT draft,              -- draft/published/ongoing/finished/cancelled(v1.2 新增)
+    article TEXT,                           -- AI 生成的推文 Markdown(v1.5 新增,发布者保存后学生详情页展示)
+    cover_image TEXT,                       -- 封面图 URL(v1.5 新增,卡片流用,可空)
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -147,4 +151,26 @@ CREATE TABLE qa_logs (
     source TEXT,
     count INTEGER DEFAULT 1,                -- 同问题出现次数(高频沉淀统计用)
     created_at TEXT
+);
+
+-- 十一、activity_scores 活动打分结果表(负责:POD-2,新增 v1.4)
+-- 记录「用户-比赛-各项得分」;由推荐接口 a(打分入库)写入,接口 b(推荐列表)只读本表
+CREATE TABLE activity_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,               -- 学生 users.id
+    activity_id INTEGER NOT NULL,           -- 活动 activities.id
+    signup_deadline TEXT,                   -- 报名截止时间(打分时从 activities 快照)
+    eligible INTEGER NOT NULL DEFAULT 0,    -- 报名条件 0/10(打分项①,10=满足)
+    major_score REAL,                       -- 专业匹配 0~10(打分项②,按程度)
+    interests_score REAL,                   -- 兴趣 0~10(打分项③,按程度)
+    skills_score REAL,                      -- 技能锻炼 0~10(打分项④,按程度)
+    conduct_score INTEGER,                  -- 操行分 0/10(打分项⑤)
+    innovation_score INTEGER,               -- 创新分 0/10(打分项⑥)
+    comprehensive_score INTEGER,            -- 综合素养评定积分 0/10(打分项⑦)
+    source TEXT,                            -- 打分来源(契约字段,llm/mock)
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, activity_id),           -- 一个用户对一个活动一条打分
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(activity_id) REFERENCES activities(id)
 );

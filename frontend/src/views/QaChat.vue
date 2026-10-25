@@ -159,17 +159,24 @@ const selectHistory = (item) => { currentId.value = item.id; messages.value = it
 const ask = async () => {
   if (!qa.question.trim()) return ElMessage.warning('先输入问题')
   const question = qa.question.trim(); loading.value = true
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 90000)
   try {
-    const answer = await fetchAsk(question, false)
+    const answer = await fetchAsk(question, false, ctrl.signal)
     messages.value.push({ question, ...answer, feedback: null })
     let current = history.value.find(item => item.id === currentId.value)
     if (!current) { current = { id: currentId.value, title: conversationName.value, messages: messages.value }; history.value.unshift(current) }
     current.messages = messages.value; current.activity_id = qa.activity_id
     if (current.title === '新对话' && !qa.activity_id) conversationName.value = question.slice(0, 18)
     qa.question = ''; await nextTick(); scrollToEnd()
-  } finally { loading.value = false }
+  } catch (e) {
+    if (e?.name === 'AbortError') {
+      messages.value.push({ question, answer: 'AI 繁忙，已记录你的问题，稍后重试或联系活动负责人。', source: 'llm', faq_id: null, feedback: null, timeout: true })
+      ElMessage.warning('AI 繁忙，已记录问题，请稍后重试')
+    } else { throw e }
+  } finally { clearTimeout(timer); loading.value = false }
 }
-const fetchAsk = async (question, noCache) => (await fetch(`${API}/api/qa/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id), no_cache: noCache }) })).json()
+const fetchAsk = async (question, noCache, signal) => (await fetch(`${API}/api/qa/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id), no_cache: noCache }), signal })).json()
 const scrollToEnd = () => conversationRef.value?.scrollTo({ top: conversationRef.value.scrollHeight, behavior: 'smooth' })
 const copyAnswer = async (message) => {
   try { await navigator.clipboard.writeText(message.answer); ElMessage.success('已复制') } catch { ElMessage.warning('复制失败，请手动选择') }

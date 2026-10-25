@@ -6,7 +6,7 @@
 
 - 8 个报名接口的路径、方法保持不变。POST/PUT JSON 使用报名文档第 7 节的字段。
 - 最新成功响应为 `{ "code": 0, "data": ... }`；错误为 `{ "code": 4xx/5xx, "message": "..." }`。早期 `code:200/msg` 已被定稿覆盖。
-- 每次请求携带 `Authorization: Bearer <token>`。会话由登录域传入，不约定 localStorage 键名。
+- 每次请求携带 `Authorization: Bearer <token>`。会话由登录域传入；登录态写入 localStorage（键 `pod2.session`），刷新后仍保持登录。
 - 列表携带 `page/page_size`。兼容已提供的两种列表数据：报名第 7 节的 `data: []` 与最新分页的 `data: { items, total }`；不会接受猜测的其他结构。
 - 新建模板只读调用 POD-1 `GET /api/activities/{id}`，读取人数；学生打开报名时重新检查状态和 `signup_deadline`。只有 published 且未截止时允许报名，后端仍作最终校验。
 - 表单题目完全按 schema 渲染，输入值原样提交。固定学号、姓名锁定；同一 schema 内 key 唯一；两个 schema 独立。
@@ -78,9 +78,9 @@ setSession(loginResult.data) // { token, role, id }，不自行生成 token
 clearSession()
 ```
 
-全应用使用同一内存会话；student/organizer 的大小写统一，ID 校验后保留。`RegistrationEntry.vue` 在学生进入时自动加载我的报名。HTTP/业务 401 通过 `session-expired` 通知宿主清理会话；切换身份或离开页面会关闭旧弹窗、取消旧查询，并丢弃旧响应。
+全应用使用同一会话（内存 + localStorage 持久化，刷新后仍登录）；student/organizer 的大小写统一，ID 校验后保留。`RegistrationEntry.vue` 在学生进入时自动加载我的报名。HTTP/业务 401 通过 `session-expired` 通知宿主清理会话；切换身份或离开页面会关闭旧弹窗、取消旧查询，并丢弃旧响应。
 
-仓库当前只有 `/api/dev/token`，没有正式密码登录 API。开发模式的“开发联调登录”调用该已有接口校验数据库用户并取得 token；不写死身份或 token，不自动创建用户，不保存密码。生产构建不包含该入口，正式登录接口交付后直接调用 `setSession`。
+正式认证接口已交付：`POST /api/auth/register`、`POST /api/auth/login`（按 role 分叉，学生用学号+密码、发布者用工号+密码），登录返回 `{ token, role, id }` 后调用 `setSession`。原 `/api/dev/token` 与“开发联调登录”面板已删除。
 
 ## 已补齐的两项对接
 
@@ -134,6 +134,6 @@ $env:VITE_DEV_API_TARGET='http://127.0.0.1:8012'
 npm run dev -- --host 127.0.0.1 --port 5175
 ```
 
-打开活动列表。测试库包含学生 1（学号 S1）、学生 2（S2）和发布者 10；活动 1 可报名、2 已取消、3 已截止、4 无表单。开发联调登录选择对应身份/ID。测试脚本只用系统临时目录数据库，不读写 `backend/campus.db`。
+打开活动列表。测试库包含学生 1（学号 S1）、学生 2（S2）和发布者 10；活动 1 可报名、2 已取消、3 已截止、4 无表单。冒烟脚本用正式 `/auth/login`（学号 S1/S2、工号 review，密码 `smoke123`）。测试脚本只用系统临时目录数据库，不读写 `backend/campus.db`。
 
 启动开发服务后，可访问 `/tests/browser/index.html` 查看隔离的回归验证页。身份切换、错误开关、请求记录仅用于测试，不进入生产入口。详情测试按已实现后端返回 JSON，直接使用正式默认适配器；新增题目也使用正式拼音生成器。`frontend/demo/`、`backend/activities_stub.py`、`backend/seed_demo.py` 已清理。

@@ -28,6 +28,8 @@ def init_db():
         conn.execute("ALTER TABLE faqs ADD COLUMN status TEXT DEFAULT 'published'")
     if "origin_title" not in cols:
         conn.execute("ALTER TABLE faqs ADD COLUMN origin_title TEXT DEFAULT ''")
+    if "updated_at" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN updated_at TEXT")
     # 答疑日志表：用于统计高频提问、自动沉淀候选（本地新增，不动共享 schema）
     conn.execute(
         """CREATE TABLE IF NOT EXISTS qa_logs (
@@ -43,6 +45,38 @@ def init_db():
     qa_cols = [r[1] for r in conn.execute("PRAGMA table_info(qa_logs)").fetchall()]
     if "count" not in qa_cols:
         conn.execute("ALTER TABLE qa_logs ADD COLUMN count INTEGER DEFAULT 1")
+    # 活动表迁移：老库是 v1.0 结构(organizer/type/status 等)，新 schema v1.3
+    # 新增 organizer_id 等字段；缺列则补列，保证旧 app.db 也能跑
+    try:
+        act_cols = [r[1] for r in conn.execute("PRAGMA table_info(activities)").fetchall()]
+        _need = {
+            "type": "TEXT",
+            "organizer_id": "INTEGER",
+            "start_time": "TEXT",
+            "end_time": "TEXT",
+            "location": "TEXT",
+            "description": "TEXT",
+            "requirements": "TEXT",
+            "tags": "TEXT",
+            "has_ticket": "INTEGER DEFAULT 1",
+            "comprehensive_score": "INTEGER",
+            "conduct_score": "REAL",
+            "innovation_score": "REAL",
+            "signup_deadline": "TEXT",
+            "min_team_member": "INTEGER DEFAULT 1",
+            "max_team_member": "INTEGER DEFAULT 1",
+            "max_participants": "INTEGER",
+            "status": "TEXT DEFAULT 'draft'",
+            "article": "TEXT",
+            "cover_image": "TEXT",
+            "created_at": "TEXT",
+        }
+        for _c, _t in _need.items():
+            if _c not in act_cols:
+                conn.execute(f"ALTER TABLE activities ADD COLUMN {_c} {_t}")
+        # 兼容老字段名：organizer(文本主办方) -> 保留；新代码用 organizer_id
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
