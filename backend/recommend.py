@@ -163,10 +163,7 @@ def recommend_list(
                 "interests": r["interests_score"],
                 "skills": r["skills_score"],
             },
-            "reasons": _reasons(
-                r, match_major, match_interests, match_skills,
-                need_conduct_score, need_innovation_score, need_comprehensive_score,
-            ),
+            "reasons": _reasons(r, match_major, match_interests, match_skills),
         })
 
     items.sort(key=lambda x: (x["score"], x["activity_id"]), reverse=True)
@@ -175,19 +172,22 @@ def recommend_list(
     return ok({"items": items[start:start + page_size], "total": total})
 
 
-def _reasons(r, match_major, match_interests, match_skills,
-             need_conduct_score, need_innovation_score, need_comprehensive_score):
+def _fmt_score(value) -> str:
+    """把 0~10 分值格式化成整数或一位小数（去掉无意义的 .0）。"""
+    try:
+        f = float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        f = 0.0
+    return str(int(f)) if f == int(f) else str(round(f, 1))
+
+
+def _reasons(r, match_major, match_interests, match_skills):
+    """勾了匹配维度才给理由、内容带分数（如「专业匹配得分6/10」）；只勾积分需求不给理由。"""
     reasons = []
-    if match_major and (r["major_score"] or 0) > 0:
-        reasons.append("专业匹配")
-    if match_interests and (r["interests_score"] or 0) > 0:
-        reasons.append("兴趣匹配")
-    if match_skills and (r["skills_score"] or 0) > 0:
-        reasons.append("技能锻炼")
-    if need_conduct_score:
-        reasons.append("可加操行分")
-    if need_innovation_score:
-        reasons.append("可加创新分")
-    if need_comprehensive_score:
-        reasons.append("可加综合素养评定积分")
+    if match_major:
+        reasons.append(f"专业匹配得分{_fmt_score(r['major_score'])}/10")
+    if match_interests:
+        reasons.append(f"兴趣得分{_fmt_score(r['interests_score'])}/10")
+    if match_skills:
+        reasons.append(f"技能锻炼得分{_fmt_score(r['skills_score'])}/10")
     return reasons
