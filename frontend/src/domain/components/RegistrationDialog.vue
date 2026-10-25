@@ -1,8 +1,9 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import DynamicFields from './DynamicFields.vue'
 import { buildRegistrationPayload, createRegistrationDraft, newMember, validateTemplate } from '../model.js'
+import { registrationBlockReason } from '../activityAccess.js'
 
 const props = defineProps({ api: { type: Object, required: true } })
 const emit = defineEmits(['submitted'])
@@ -31,14 +32,16 @@ async function open(id) {
   opening.value = true
   error.value = ''
   try {
-    // Fetch before presenting the fill-in popup, as required by section 7.5.
-    const form = validateTemplate(await props.api.getForm(id, controller.signal))
+    // Check current activity state even if a caller bypasses the activity button.
     const activity = await props.api.getActivity(id, controller.signal)
     if (ticket !== revision) return
-    if (activity.status === 'cancelled') {
-      ElMessage.error('活动已取消，不能报名')
+    const blocked = registrationBlockReason(activity)
+    if (blocked) {
+      ElMessage.error(blocked)
       return
     }
+    const form = validateTemplate(await props.api.getForm(id, controller.signal))
+    if (ticket !== revision) return
     activityId.value = id
     template.value = form
     draft.value = createRegistrationDraft(form)
@@ -65,7 +68,7 @@ async function submit() {
   try {
     const payload = buildRegistrationPayload(template.value, draft.value)
     saving.value = true
-    const result = await props.api.submitRegistration(activityId.value, payload)
+    const result = await props.api.submitRegistration(activityId.value, payload, controller.signal)
     if (ticket !== revision) return
     ElMessage.success('报名提交成功')
     saving.value = false
@@ -89,6 +92,7 @@ function reset() {
   template.value = null
   draft.value = null
 }
+onBeforeUnmount(reset)
 defineExpose({ open, close: dismiss, reset, opening })
 </script>
 

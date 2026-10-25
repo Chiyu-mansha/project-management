@@ -1,7 +1,15 @@
--- 校园活动智能通知&报名助理 数据库 schema v1
--- SQLite 版本,改动需经技术负责人批准并升级版本号
+-- 校园活动智能通知&报名助理 数据库 schema v1.4
+-- SQLite 版本;与飞书《数据库 Schema v1.4》文档保持一致
+-- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
+-- v1.3 备注(10-11 变更申请):faqs 改 status 枚举 published/draft、category 按活动类型口径、新增 origin_title;新增 qa_logs 表(POD-1 申请,PM 批准)
+-- v1.4 备注(10-19 新增):新增 activity_scores 打分结果表(POD-2 登录/画像/推荐,记录用户-比赛-各项得分)
+-- 10-12 修正(POD-2 指出):时间默认值 datetime(now) → datetime('now'),不加引号会被 SQLite 当列名解析为 NULL
+-- v1.2 备注(10-11 拍板):activities.status 增加 cancelled(POD-1 提案,PM 拍板)
+-- v1.1 备注(10-11 复议):activities 报名截止字段回退为 signup_deadline
+-- (POD-1 实现已用该名,原提出方撤回 registration_deadline)
+-- 约定:表名复数、字段 snake_case、主键统一 id 自增;每张表标注负责 POD
 
--- 用户表(POD-2 读,POD-1 只读脱敏画像)
+-- 一、users 用户表(负责:POD-2)——仅存学生;发布者见 organizers 表
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     password_hash TEXT NOT NULL,
@@ -18,7 +26,7 @@ CREATE TABLE users (
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 发布者表
+-- 二、organizers 发布者表(负责:POD-1,新增 v1.1)
 CREATE TABLE organizers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     account TEXT NOT NULL UNIQUE,           -- 工号(登录账号)
@@ -28,7 +36,7 @@ CREATE TABLE organizers (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
--- 活动表(POD-1 读写)
+-- 三、activities 活动/竞赛表(负责:POD-1)
 CREATE TABLE activities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
@@ -48,11 +56,11 @@ CREATE TABLE activities (
     min_team_member INTEGER NOT NULL,       -- 队伍最少人数(含队长,发布时设置)
     max_team_member INTEGER NOT NULL,       -- 队伍最多人数(含队长,发布时设置)
     max_participants INTEGER,               -- 报名上限(队数,空=不限)
-    status TEXT DEFAULT draft,            -- draft/published/ongoing/finished/cancelled(v1.2 新增)
+    status TEXT DEFAULT draft,              -- draft/published/ongoing/finished/cancelled(v1.2 新增)
     created_at TEXT DEFAULT (datetime('now'))
 );
 
--- 报名表(POD-2 读写,POD-1 读)
+-- 四、registrations 报名表(负责:POD-2)
 CREATE TABLE registrations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     activity_id INTEGER NOT NULL,           -- 对应 activities.id
@@ -66,7 +74,7 @@ CREATE TABLE registrations (
     FOREIGN KEY(form_id) REFERENCES forms(id)
 );
 
--- 报名表格式表 —— 负责:POD-2
+-- 五、forms 报名表格式表(负责:POD-2,新增 v1.1)
 CREATE TABLE forms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     activity_id INTEGER NOT NULL UNIQUE,    -- 一个活动一张表单
@@ -79,7 +87,7 @@ CREATE TABLE forms (
     FOREIGN KEY(organizer_id) REFERENCES organizers(id)
 );
 
--- registration_members 报名成员子表 —— 负责:POD-2(新增,v1.1)
+-- 六、registration_members 报名成员子表(负责:POD-2,新增 v1.1)
 CREATE TABLE registration_members (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     registration_id INTEGER NOT NULL,       -- 关联 registrations.id 报名单
@@ -92,12 +100,13 @@ CREATE TABLE registration_members (
     FOREIGN KEY(activity_id) REFERENCES activities(id)
 );
 
--- 凭证表(仅 POD-3 可写,防篡改)
+-- 七、credentials 电子活动票/综测凭证表(负责:POD-3,仅 POD-3 写)
+-- 状态流转:issued(发放)→ confirmed(名单确认)→ signed(已签章)
 CREATE TABLE credentials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     activity_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
-    status TEXT DEFAULT issued,           -- issued/confirmed/signed
+    status TEXT DEFAULT issued,             -- issued/confirmed/signed
     checkin_time TEXT,                      -- 签到时间
     confirmed_at TEXT,                      -- 负责人确认名单时间
     signed_at TEXT,                         -- 电子签章时间
@@ -106,20 +115,20 @@ CREATE TABLE credentials (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
--- FAQ 表(POD-1 读写)
+-- 八、faqs FAQ 表(负责:POD-1)
 CREATE TABLE faqs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     activity_id INTEGER,                    -- 空=全局FAQ,非空=某活动专属
     question TEXT NOT NULL,
     answer TEXT NOT NULL,
     category TEXT,                          -- 竞赛类/讲座/分享类/培训/工作坊类/招募类/文体活动类/通知类
-    source TEXT DEFAULT auto,             -- auto(AI自动沉淀)/manual(人工新增)/llm
-    status TEXT DEFAULT published,        -- published(已发布)/draft(待审核)
+    source TEXT DEFAULT auto,               -- auto(AI自动沉淀)/manual(人工新增)/llm
+    status TEXT DEFAULT published,          -- published(已发布)/draft(待审核,AI沉淀先入draft人工审核)
     origin_title TEXT DEFAULT '',           -- 推文AI提取时的来源推文标题
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 站内通知表(POD-2 读,POD-1 写)
+-- 九、notifications 通知表(负责:POD-1,读写全归 POD-1)
 CREATE TABLE notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,               -- 接收人 users.id
@@ -130,7 +139,7 @@ CREATE TABLE notifications (
     sent_at TEXT DEFAULT (datetime('now'))
 );
 
--- qa_logs 答疑日志表 
+-- 十、qa_logs 答疑日志表(负责:POD-1,新增 v1.3,只写日志不改业务表)
 CREATE TABLE qa_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     activity_id INTEGER,
@@ -139,4 +148,26 @@ CREATE TABLE qa_logs (
     source TEXT,
     count INTEGER DEFAULT 1,                -- 同问题出现次数(高频沉淀统计用)
     created_at TEXT
+);
+
+-- 十一、activity_scores 活动打分结果表(负责:POD-2,新增 v1.4)
+-- 记录「用户-比赛-各项得分」;由推荐接口 a(打分入库)写入,接口 b(推荐列表)只读本表
+CREATE TABLE activity_scores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,               -- 学生 users.id
+    activity_id INTEGER NOT NULL,           -- 活动 activities.id
+    signup_deadline TEXT,                   -- 报名截止时间(打分时从 activities 快照)
+    eligible INTEGER NOT NULL DEFAULT 0,    -- 报名条件 0/10(打分项①,10=满足)
+    major_score REAL,                       -- 专业匹配 0~10(打分项②,按程度)
+    interests_score REAL,                   -- 兴趣 0~10(打分项③,按程度)
+    skills_score REAL,                      -- 技能锻炼 0~10(打分项④,按程度)
+    conduct_score INTEGER,                  -- 操行分 0/10(打分项⑤)
+    innovation_score INTEGER,               -- 创新分 0/10(打分项⑥)
+    comprehensive_score INTEGER,            -- 综合素养评定积分 0/10(打分项⑦)
+    source TEXT,                            -- 打分来源(契约字段,llm/mock)
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, activity_id),           -- 一个用户对一个活动一条打分
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    FOREIGN KEY(activity_id) REFERENCES activities(id)
 );

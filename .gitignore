@@ -1,6 +1,7 @@
 # 前端
 node_modules/
 dist/
+output/playwright/
 
 # 后端
 venv/
@@ -10,3 +11,4 @@ __pycache__/
 
 # 密钥
 .env
+.venv/

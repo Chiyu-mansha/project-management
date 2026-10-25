@@ -1,17 +1,11 @@
+import { generateFieldKey as defaultGenerateFieldKey } from './fieldKeys.js'
+
 let nextUiId = 0
 export const newUiId = () => `row-${++nextUiId}`
 export const FIXED_MEMBER_FIELDS = Object.freeze([
   Object.freeze({ field_key: 'student_id', label: '学号', type: 'text', required: true }),
   Object.freeze({ field_key: 'name', label: '姓名', type: 'text', required: true })
 ])
-
-export class ContractPendingError extends Error {
-  constructor(area, message) {
-    super(message)
-    this.name = 'ContractPendingError'
-    this.area = area
-  }
-}
 
 export function isFixedMemberField(field) {
   return FIXED_MEMBER_FIELDS.some((fixed) => fixed.field_key === field.field_key)
@@ -64,12 +58,14 @@ export function newQuestion() {
   return { field_key: '', label: '', type: 'text', required: false, _uiId: newUiId() }
 }
 
-export async function buildFormPayload(draft, generateFieldKey) {
+export async function buildFormPayload(draft, generateFieldKey = defaultGenerateFieldKey) {
   const output = {}
   for (const section of ['form_team_schema', 'form_member_schema']) {
     const rows = draft[section]
     if (!Array.isArray(rows)) throw new Error('表单内容无效')
     const seen = new Set()
+    // Reserve every existing key before generating, including fields later in the list.
+    const reserved = new Set(rows.map((field) => field.field_key).filter(Boolean))
     output[section] = []
     for (const [index, field] of rows.entries()) {
       const title = section === 'form_team_schema' ? '队伍题目' : '队员题目'
@@ -78,10 +74,14 @@ export async function buildFormPayload(draft, generateFieldKey) {
       let key = field.field_key
       if (!key) {
         if (typeof generateFieldKey !== 'function') {
-          throw new ContractPendingError('fieldKey', '暂时无法保存新增题目，请稍后重试')
+          throw new Error('题目标识生成失败，请稍后重试')
         }
         key = await generateFieldKey(field.label)
         if (typeof key !== 'string' || !key.trim()) throw new Error(`${title}第 ${index + 1} 项暂时无法保存`)
+        const baseKey = key
+        let suffix = 2
+        while (reserved.has(key)) key = `${baseKey}_${suffix++}`
+        reserved.add(key)
         // Keep identifiers stable on subsequent saves; UI-only values never enter JSON.
         field.field_key = key
       }
@@ -149,8 +149,7 @@ export function readList(data, page = 1, pageSize = 20) {
   throw new Error('列表加载失败，请稍后重试')
 }
 
-// This is a local view model, not an invented /registrations/{id} response body.
-// The response-to-view adapter must be provided when the missing contract is agreed.
+// Internal display data; adapters.js maps the implemented backend response.
 export function validateDetailView(view) {
   checkSchema(view?.teamSchema)
   checkSchema(view?.memberSchema, true)

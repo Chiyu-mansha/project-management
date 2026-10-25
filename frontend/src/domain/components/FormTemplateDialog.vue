@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import SchemaEditor from './SchemaEditor.vue'
 import { buildFormPayload, checkTeamLimits, createTemplateDraft, readList, validateTemplate } from '../model.js'
@@ -94,7 +94,7 @@ async function save() {
   try {
     const payload = await buildFormPayload(draft.value, props.generateFieldKey)
     if (ticket !== revision) return
-    const result = wasEdit ? await props.api.updateForm(id, payload) : await props.api.createForm(id, payload)
+    const result = wasEdit ? await props.api.updateForm(id, payload, controller.signal) : await props.api.createForm(id, payload, controller.signal)
     if (ticket !== revision) return
     ElMessage.success(wasEdit ? '表单修改成功' : '表单创建成功')
     saving.value = false
@@ -128,6 +128,7 @@ function reset() {
   metadata.value = null
   template.value = null
 }
+onBeforeUnmount(reset)
 defineExpose({
   openCreate: (id) => load(id, 'create'),
   openView: (id) => load(id, 'view'),
