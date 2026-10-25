@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 
+import requests
 from fastapi import APIRouter, Depends
 
 import db
@@ -12,6 +14,32 @@ from common import deadline_passed, fail, ok, to_iso
 from schemas import RegistrationPayload
 
 router = APIRouter(prefix="/api", tags=["registrations"])
+
+# POD-1 通知接口：报名成功时内部 HTTP 调用写入，不直接连 notifications 表
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+NOTIFY_TIMEOUT = 5
+
+
+def _notify_signup_success(activity_id: int, activity_title: str, user_ids: list[int]) -> None:
+    """报名成功后调 POD-1 的 POST /api/notifications，给全队每个队员各写一条「报名提醒」。
+
+    尽力而为：某条通知失败不影响报名结果，仅静默忽略。
+    """
+    content = f"您已成功报名活动《{activity_title}》，请关注后续通知。"
+    for uid in user_ids:
+        try:
+            requests.post(
+                f"{BACKEND_BASE_URL}/api/notifications",
+                json={
+                    "user_id": uid,
+                    "activity_id": activity_id,
+                    "type": "报名提醒",
+                    "content": content,
+                },
+                timeout=NOTIFY_TIMEOUT,
+            )
+        except Exception:  # 连接失败 / 超时等：不阻断报名流程
+            pass
 
 
 def _activity_or_404(activity_id: int) -> dict:
@@ -148,6 +176,7 @@ def submit_registration(
     except sqlite3.IntegrityError:
         fail(409, "该成员已报名本活动")
 
+    _notify_signup_success(id, activity["title"], user_ids)
     return ok({"registration_id": reg_id})
 
 
