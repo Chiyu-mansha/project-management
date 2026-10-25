@@ -5,7 +5,7 @@
       <div>
         <el-button v-if="owner" type="success" @click="genDlg = true">✨ AI 生成推文</el-button>
         <el-button v-if="owner" type="warning" @click="$router.push(`/activities/${act.id}/edit`)">编辑</el-button>
-        <el-button @click="$router.push('/activities')">返回列表</el-button>
+        <el-button @click="$router.push(session?.role === 'organizer' ? '/activities' : '/browse')">返回列表</el-button>
       </div>
     </div>
 

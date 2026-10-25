@@ -1,5 +1,6 @@
 <template>
-  <div class="act-card" @click="$router.push(`/activities/${activity.id}`)">
+  <div class="act-card" role="link" tabindex="0" :aria-label="`查看活动：${activity.title}`"
+    @click="$router.push(`/activities/${activity.id}`)" @keydown.enter="$router.push(`/activities/${activity.id}`)">
     <div class="cover" :style="coverStyle">
       <img v-if="activity.cover_image" :src="activity.cover_image" alt="" />
       <span v-else class="cover-emoji">{{ typeEmoji(activity.type) }}</span>

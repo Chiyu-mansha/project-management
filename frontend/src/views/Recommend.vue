@@ -1,122 +1,75 @@
+<script setup>
+import { computed, onBeforeUnmount, watch } from 'vue'
+import { createApiClient } from '../api/request.js'
+import { createRecommendApi } from '../api/recommend.js'
+import { session, clearSession } from '../auth/session.js'
+import { PREFERENCE_LABELS, useRecommendations } from '../domain/recommendations.js'
+import RecommendCards from './RecommendCards.vue'
+
+const student = computed(() => session.value?.role === 'student')
+const api = createRecommendApi(createApiClient({
+  baseUrl: import.meta.env.VITE_API_BASE_URL || '/api',
+  getToken: () => session.value?.token,
+  onUnauthorized: clearSession
+}))
+const { tags, hasFilter, items, total, page, pageSize, loading, scoring,
+  listError, scoreError, needsProfile, load, score, reset } = useRecommendations(api, () => student.value)
+watch(() => [session.value?.token, session.value?.id, session.value?.role], () => {
+  reset()
+  if (student.value) score()
+}, { immediate: true })
+onBeforeUnmount(reset)
+</script>
+
 <template>
-  <div class="recommend-page">
-    <h2>智能推荐</h2>
+  <section class="recommend-page" :aria-busy="scoring || loading">
+    <div class="page-heading">
+      <h2>智能推荐</h2>
+      <el-button @click="$router.push('/browse')">去活动广场</el-button>
+    </div>
     <el-empty v-if="!student" description="请先以学生身份登录">
       <el-button type="primary" @click="$router.push('/login')">去登录</el-button>
     </el-empty>
     <template v-else>
-      <el-alert v-if="scoreError" :title="scoreError" type="error" show-icon :closable="false">
-        <el-button size="small" @click="score">重试打分</el-button>
+      <el-alert v-if="scoreError" :title="scoreError" type="error" show-icon :closable="false" class="feedback">
+        <el-button v-if="needsProfile" size="small" @click="$router.push('/profile')">完善画像</el-button>
+        <el-button size="small" :loading="scoring" @click="score">重试打分</el-button>
+        <p>可以先去活动广场查看活动；已有评分仍可通过标签筛选查看。</p>
       </el-alert>
-
-      <div class="tags">
+      <div class="tags" role="group" aria-label="推荐偏好">
         <span class="tags-label">筛选标签：</span>
-        <el-checkbox v-model="tags.match_major" @change="load">专业匹配</el-checkbox>
-        <el-checkbox v-model="tags.match_interests" @change="load">兴趣</el-checkbox>
-        <el-checkbox v-model="tags.match_skills" @change="load">技能锻炼</el-checkbox>
-        <el-checkbox v-model="tags.need_conduct_score" @change="load">操行分</el-checkbox>
-        <el-checkbox v-model="tags.need_innovation_score" @change="load">创新分</el-checkbox>
-        <el-checkbox v-model="tags.need_comprehensive_score" @change="load">综合素养评定积分</el-checkbox>
+        <el-checkbox v-for="(label, key) in PREFERENCE_LABELS" :key="key" v-model="tags[key]" @change="load(1)">{{ label }}</el-checkbox>
         <el-button size="small" :loading="scoring" @click="score">重新打分</el-button>
       </div>
-
-      <el-alert v-if="listError" :title="listError" type="error" show-icon :closable="false" />
-      <el-empty v-if="!hasFilter" description="勾选上方标签后，为你筛选推荐活动" />
-      <template v-else>
-        <!--
-          占位接口（POD-1 联调用）：把推荐结果通过作用域插槽交给 POD-1 的活动展示组件渲染。
-          POD-1 用法：<Recommend v-slot="{ items, total, loading }">…渲染活动卡片…</Recommend>
-          items = [{ activity_id, score, scores: { major, interests, skills }, reasons }]
-        -->
-        <slot :items="items" :total="total" :loading="loading">
-          <el-empty v-if="!loading && items.length === 0" description="暂无符合条件的推荐" />
-          <p v-else class="muted">共 {{ total }} 个推荐活动，活动卡片由 POD-1 展示组件渲染。</p>
-        </slot>
+      <p v-if="scoring" role="status">正在更新匹配评分，完成后将按当前标签展示推荐。</p>
+      <el-skeleton v-if="loading" :rows="5" animated />
+      <el-alert v-else-if="listError" :title="listError" type="error" show-icon :closable="false">
+        <el-button size="small" @click="load(page)">重试推荐列表</el-button>
+      </el-alert>
+      <el-empty v-else-if="!hasFilter" description="勾选上方标签后，为你筛选推荐活动" />
+      <template v-else-if="!scoring">
+        <el-empty v-if="!items.length" description="暂无符合条件的推荐">
+          <el-button type="primary" @click="$router.push('/browse')">去活动广场</el-button>
+        </el-empty>
+        <template v-else>
+          <p class="muted">共 {{ total }} 个推荐活动{{ scoreError ? '（基于已有评分）' : '' }}</p>
+          <slot :items="items" :total="total" :loading="loading">
+            <RecommendCards :items="items" />
+          </slot>
+        </template>
+        <el-pagination v-if="total > pageSize" :current-page="page" :page-size="pageSize" :total="total"
+          layout="prev, pager, next" @current-change="load" />
       </template>
     </template>
-  </div>
+  </section>
 </template>
 
-<script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
-import { createApiClient } from '../api/request.js'
-import { createRecommendApi } from '../api/recommend.js'
-import { session, clearSession } from '../auth/session.js'
-
-const request = createApiClient({
-  baseUrl: import.meta.env.VITE_API_BASE_URL || '/api',
-  getToken: () => session.value?.token,
-  onUnauthorized: () => clearSession()
-})
-const recommendApi = createRecommendApi(request)
-const student = computed(() => session.value?.role === 'student')
-
-const tags = reactive({
-  match_major: false, match_interests: false, match_skills: false,
-  need_conduct_score: false, need_innovation_score: false, need_comprehensive_score: false
-})
-const scoring = ref(false)
-const scoreError = ref('')
-const loading = ref(false)
-const listError = ref('')
-const items = ref([])
-const total = ref(0)
-
-const hasFilter = computed(() => Object.values(tags).some(Boolean))
-
-function query() {
-  return {
-    match_major: tags.match_major ? 1 : 0,
-    match_interests: tags.match_interests ? 1 : 0,
-    match_skills: tags.match_skills ? 1 : 0,
-    need_conduct_score: tags.need_conduct_score ? 1 : 0,
-    need_innovation_score: tags.need_innovation_score ? 1 : 0,
-    need_comprehensive_score: tags.need_comprehensive_score ? 1 : 0
-  }
-}
-
-async function score() {
-  if (!student.value || scoring.value) return
-  scoring.value = true
-  scoreError.value = ''
-  try {
-    await recommendApi.score()
-  } catch (cause) {
-    scoreError.value = cause.message
-  } finally {
-    scoring.value = false
-  }
-  await load()
-}
-
-let revision = 0
-async function load() {
-  if (!student.value || !hasFilter.value) {
-    items.value = []
-    total.value = 0
-    return
-  }
-  const ticket = ++revision
-  loading.value = true
-  listError.value = ''
-  try {
-    const data = await recommendApi.list(query())
-    if (ticket !== revision) return
-    items.value = data.items
-    total.value = data.total
-  } catch (cause) {
-    if (ticket === revision) listError.value = cause.message
-  } finally {
-    if (ticket === revision) loading.value = false
-  }
-}
-
-onMounted(score)
-</script>
-
 <style scoped>
-.recommend-page{max-width:900px}
-.tags{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:16px 0}
-.tags-label{color:#606266;font-size:14px}
-.muted{color:#909399;font-size:13px;margin-top:10px}
+.recommend-page{max-width:1100px;margin:0 auto}
+.page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.page-heading h2{margin:0}
+.tags{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:20px 0}
+.tags-label,.muted{color:#606266;font-size:14px}
+.feedback{margin-top:16px}
+.el-pagination{margin-top:24px;justify-content:center}
 </style>
