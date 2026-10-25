@@ -2,13 +2,15 @@
 import assert from 'node:assert/strict'
 import { createApiClient } from '../src/api/request.js'
 import { createRegistrationApi } from '../src/api/registrations.js'
+import { createNotificationApi } from '../src/api/notifications.js'
 
 const baseUrl = 'http://127.0.0.1:8012/api'
 const SMOKE_PASSWORD = 'smoke123'
 async function login(role, account) {
   const publicRequest = createApiClient({ baseUrl })
   const { token } = await publicRequest('/auth/login', { method: 'POST', body: { role, account, password: SMOKE_PASSWORD }, authRequired: false })
-  return createRegistrationApi(createApiClient({ baseUrl, getToken: () => token }))
+  const request = createApiClient({ baseUrl, getToken: () => token })
+  return { ...createRegistrationApi(request), notifications: createNotificationApi(request) }
 }
 const owner = await login('organizer', 'review')
 const captain = await login('student', 'S1')
@@ -32,7 +34,16 @@ const payload = { extra_fields: { team_extra: { project_name: '联调回归项�
 ] } }
 const registration = await captain.submitRegistration(1, payload)
 assert.ok(registration.registration_id)
+for (const user of [captain, member]) {
+  const notices = await user.notifications.list()
+  assert.equal(notices.total, 1)
+  assert.equal(notices.items[0].activity_id, 1)
+  assert.equal(notices.items[0].type, '报名提醒')
+  assert.match(notices.items[0].content, /成功报名/)
+}
 await assert.rejects(captain.submitRegistration(1, payload), error => error.status === 409)
+assert.equal((await captain.notifications.list()).total, 1)
+assert.equal((await member.notifications.list()).total, 1)
 await assert.rejects(owner.updateForm(1, schema), error => error.status === 400)
 assert.equal((await owner.getActivityRegistrations(1)).total, 1)
 assert.equal((await captain.getMyRegistrations(1)).items[0].my_role, 'captain')
@@ -47,4 +58,4 @@ for (const id of [2, 3]) {
   await owner.createForm(id, schema)
   await assert.rejects(captain.submitRegistration(id, payload), error => error.status === 400)
 }
-console.log('PASS: all 8 registration routes, POD-1 activity adapter, role restrictions, duplicate registration, template lock, cancellation and member cleanup, cancelled/deadline guards.')
+console.log('PASS: all 8 registration routes, POD-1 activity adapter, role restrictions, duplicate registration, template lock, cancellation and member cleanup, cancelled/deadline guards; signup delivers one real HTTP notification to each teammate, rejected duplicates create no extra notifications.')

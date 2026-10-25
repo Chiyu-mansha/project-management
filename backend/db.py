@@ -54,6 +54,13 @@ def init_db() -> None:
             )"""
         )
         conn.commit()
+
+        # 账号管理：为 users / organizers 补 avatar 列（老库缺列则补，幂等）
+        for _table in ("users", "organizers"):
+            _cols = [r[1] for r in conn.execute(f"PRAGMA table_info({_table})").fetchall()]
+            if _cols and "avatar" not in _cols:
+                conn.execute(f"ALTER TABLE {_table} ADD COLUMN avatar TEXT")
+        conn.commit()
     finally:
         conn.close()
 

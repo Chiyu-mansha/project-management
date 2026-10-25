@@ -1,14 +1,9 @@
 """AI 网关独立服务入口（各 POD 通过 HTTP 调用）。
 
 网关作为独立服务运行，其它模块（backend 等）通过 HTTP 调 /api/ai/*，不直接 import。
-
-启动：
-    cd 网关
-    uvicorn main:app --reload --port 8100
-
-默认走 Mock；在 网关/.env 设 USE_REAL_LLM=1 并填 Key 后走真实大模型。
+启动：uvicorn main:app --reload --port 8100
 """
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,9 +29,9 @@ def hello():
 # ---------- 请求体 ----------
 
 class GenerateArticleReq(BaseModel):
-    style: str = "简约"                 # 简约 / 活泼 / 正式
-    activity: dict = {}                 # 活动信息，由 backend 查表后传入
-    activity_id: Optional[int] = None   # 保留 id 用于日志，可选
+    style: str = "简约"
+    activity: dict = {}
+    activity_id: Optional[int] = None
 
 
 class ChatReq(BaseModel):
@@ -59,14 +54,28 @@ class RecommendReq(BaseModel):
     user_id: int
 
 
-# ---------- 能力 2：推文关键问题提取 ----------
+class ScoreReq(BaseModel):
+    profile: Dict[str, Any]
+    activity: Dict[str, Any]
+
+
+# ---------- 接口路由 ----------
+
+_STYLE_GUIDE = {
+    "简约": "简洁清晰，少修饰，直说重点",
+    "活泼": "轻松有趣，多用 emoji 和网络用语，有感染力",
+    "正式": "正式得体，用词规范，适合官方通知",
+}
+
 
 @app.post("/api/ai/generate-article")
 def generate_article(req: GenerateArticleReq):
-    # 网关不查库，只负责把 member-2 传过来的 activity 对象拼成 Prompt
     a = req.activity or {}
+    guide = _STYLE_GUIDE.get(req.style, _STYLE_GUIDE["简约"])
     prompt = "\n".join([
-        f"请为下面这个活动写一篇「{req.style}」风格的校园推文，用 Markdown 格式：",
+        f"请为下面这个校园活动写一篇「{req.style}」风格的推广推文（{guide}）。",
+        "",
+        "活动信息：",
         f"- 标题：{a.get('title', '')}",
         f"- 主办方：{a.get('organizer', '')}",
         f"- 类型：{a.get('type', '')}",
@@ -78,38 +87,53 @@ def generate_article(req: GenerateArticleReq):
     ])
     return {"content": ai_gateway.generate_text(prompt=prompt)}
 
+
+
+class PolishReq(BaseModel):
+    content: str
+    style: str = "简约"
+
+
+@app.post("/api/ai/polish-article")
+def polish_article(req: PolishReq):
+    """润色：改写已有推文，保持信息不变，只优化表达和排版。"""
+    guide = _STYLE_GUIDE.get(req.style, _STYLE_GUIDE["简约"])
+    prompt = (
+        f"请把下面这段校园推文改写得更「{req.style}」（{guide}），"
+        f"保持信息不变，只优化表达、排版和吸引力，仍用 Markdown 格式：\n\n{req.content}"
+    )
+    return {"content": ai_gateway.generate_text(prompt=prompt)}
+
 # ---------- 能力 1：智能答疑（对话） ----------
 
 @app.post("/api/ai/chat")
 def chat(req: ChatReq):
-    # 透传 activity_id
     result = ai_gateway.chat(req.question, activity_id=req.activity_id)
     return {"answer": result["answer"], "source": result["source"]}
 
-
-# ---------- 能力 2：推文关键问题提取 ----------
 
 @app.post("/api/ai/extract-faq")
 def extract_faq(req: ExtractFaqReq):
     return {"items": ai_gateway.extract_faq(req.title, req.content, req.count)}
 
 
-# ---------- 能力 3：同义词 / 相似问题匹配 ----------
-
 @app.post("/api/ai/similar-question")
 def similar_question(req: SimilarReq):
     return {"index": ai_gateway.similar_question(req.question, req.candidates)}
 
 
-# ---------- 扩展：个性化推荐 ----------
-
 @app.post("/api/ai/recommend")
 def recommend(req: RecommendReq):
-    # TODO(POD-2): 后续按 user_id 查画像 + 拉活动候选列表（查库后替换掉 mock_candidates）
-    # 临时 Mock 几个候选活动，验证网关透传和推荐逻辑
     mock_candidates = [
         {"id": 1, "tags": "编程"},
         {"id": 2, "tags": "篮球"},
         {"id": 3, "tags": "讲座"}
     ]
     return {"items": ai_gateway.recommend({"user_id": req.user_id}, mock_candidates)}
+
+
+# ---------- 扩展：AI 打分 ----------
+@app.post("/api/ai/score")
+def score(req: ScoreReq):
+    """POD-2 推荐页调用：对单个活动打分。返回纯数据，不包 code/data"""
+    return ai_gateway.score_activity(req.profile, req.activity)

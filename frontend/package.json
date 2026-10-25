@@ -12,9 +12,10 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "element-plus": "^2.7.0",
+    "md-editor-v3": "^7.1.0",
+    "pinyin-pro": "3.29.5",
     "vue": "^3.4.0",
-    "vue-router": "^4.6.4",
-    "pinyin-pro": "3.29.5"
+    "vue-router": "^4.6.4"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

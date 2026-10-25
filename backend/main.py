@@ -5,21 +5,27 @@ POD-1 活动/FAQ/答疑 + POD-2 报名管理(PM 合并仪式集成)。
 """
 from __future__ import annotations
 
+import os
 import sqlite3
+import uuid
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
+from common import ok
 from database import init_db as init_db_pod1
 from activity import activity_router
 from faq import faqs_router, faqs_auto_router, qa_router
 from notification import notifications_router
+from scheduler import start_scheduler  # 新增定时任务导入
 
 import db
 from auth_routes import router as auth_router
 from profile import router as profile_router
+from account import router as account_router
 from recommend import router as recommend_router
 from forms import router as forms_router
 from registrations import router as registrations_router
@@ -41,6 +47,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---- 图片上传：存本地 uploads/ 目录并静态服务 ----
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
 # ---- POD-1:活动域 + FAQ/答疑 ----
 init_db_pod1()
 app.include_router(activity_router)
@@ -52,6 +63,7 @@ app.include_router(notifications_router)
 # ---- POD-2:认证/画像/推荐 + 报名域(POD-1 正式活动接口已合入) ----
 app.include_router(auth_router)
 app.include_router(profile_router)
+app.include_router(account_router)
 app.include_router(recommend_router)
 app.include_router(forms_router)
 app.include_router(registrations_router)
@@ -62,9 +74,22 @@ def hello():
     return {"message": "backend ok"}
 
 
+@app.post("/api/upload")
+async def upload_image(file: UploadFile = File(...)):
+    """上传图片到 uploads/，返回可访问的 URL。"""
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+        raise HTTPException(400, detail={"code": 400, "message": "仅支持图片格式"})
+    fname = f"{uuid.uuid4().hex}{ext}"
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(await file.read())
+    return ok({"url": f"/uploads/{fname}"})
+
+
 @app.on_event("startup")
 def startup() -> None:
     db.init_db()
+    start_scheduler()  # 新增：启动定时任务
 
 
 @app.exception_handler(HTTPException)

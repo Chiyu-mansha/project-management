@@ -8,7 +8,13 @@ venv/
 __pycache__/
 *.pyc
 *.db
+*.db.bak-*
+*.db.bak
+uploads/
 
 # 密钥
 .env
 .venv/
+
+# 本地分工/规划文档(不入库)
+POD-1分工方案.md

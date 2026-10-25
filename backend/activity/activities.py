@@ -7,6 +7,7 @@
 - PUT    /api/activities/{id}   编辑/变更
 """
 import os
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -24,15 +25,17 @@ BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
 def _trigger_faq_extract(activity_id: int):
-    """发布/编辑活动后触发 FAQ 自动提取（成员3 的接口），失败不影响发布。"""
-    try:
-        requests.post(
-            f"{BACKEND_URL}/api/faqs/from-activity",
-            json={"activity_id": activity_id},
-            timeout=75,
-        )
-    except Exception:
-        pass
+    """发布/编辑活动后【异步】触发 FAQ 自动提取（成员3 的接口），失败不影响发布。"""
+    def _run():
+        try:
+            requests.post(
+                f"{BACKEND_URL}/api/faqs/from-activity",
+                json={"activity_id": activity_id},
+                timeout=75,
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
 
 
 class ActIn(BaseModel):
@@ -55,6 +58,8 @@ class ActIn(BaseModel):
     max_team_member: int = 1                  # 最多人数(含队长)
     max_participants: Optional[int] = None    # 报名上限(队伍数)
     status: Optional[str] = "draft"           # draft/published/ongoing/finished/cancelled
+    article: Optional[str] = ""               # AI 生成的推文 Markdown(v1.5)
+    cover_image: Optional[str] = ""           # 封面图 URL(v1.5,可空)
 
     @model_validator(mode="after")
     def _clear_scores_without_comprehensive(self):
@@ -93,7 +98,8 @@ def _auto_transition(conn):
 _COLUMNS = (
     "title, type, organizer_id, start_time, end_time, location, description, "
     "requirements, tags, has_ticket, comprehensive_score, conduct_score, innovation_score, "
-    "signup_deadline, min_team_member, max_team_member, max_participants, status"
+    "signup_deadline, min_team_member, max_team_member, max_participants, status, "
+    "article, cover_image"
 )
 
 
@@ -102,12 +108,12 @@ def create_activity(body: ActIn):
     conn = get_conn()
     cur = conn.execute(
         f"""INSERT INTO activities ({_COLUMNS})
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (body.title, body.type, body.organizer_id, body.start_time, body.end_time, body.location,
          body.description, body.requirements, body.tags, body.has_ticket,
          body.comprehensive_score, body.conduct_score, body.innovation_score,
          body.signup_deadline, body.min_team_member, body.max_team_member,
-         body.max_participants, body.status),
+         body.max_participants, body.status, body.article, body.cover_image),
     )
     new_id = cur.lastrowid
     conn.commit()
@@ -123,11 +129,17 @@ def list_activities(
     tags: Optional[str] = None,
     keyword: Optional[str] = None,
     status: Optional[str] = None,
+    ids: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
 ):
-    """活动列表：支持类型/标签/关键词/状态筛选 + 分页。"""
+    """活动列表：支持类型/标签/关键词/状态/ID批量筛选 + 分页。"""
     where, params = [], []
+    if ids:
+        id_list = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+        if id_list:
+            where.append(f"id IN ({','.join('?' * len(id_list))})")
+            params.extend(id_list)
     if type:
         where.append("type = ?")
         params.append(type)
@@ -138,8 +150,13 @@ def list_activities(
         where.append("(title LIKE ? OR description LIKE ?)")
         params += [f"%{keyword}%", f"%{keyword}%"]
     if status:
-        where.append("status = ?")
-        params.append(status)
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if len(statuses) == 1:
+            where.append("status = ?")
+            params.append(statuses[0])
+        else:
+            where.append(f"status IN ({','.join('?' * len(statuses))})")
+            params.extend(statuses)
     else:
         # 默认隐藏已取消的活动（想查看时传 status=cancelled）
         where.append("status != 'cancelled'")
@@ -186,13 +203,13 @@ def update_activity(activity_id: int, body: ActIn):
             title=?, type=?, organizer_id=?, start_time=?, end_time=?, location=?,
             description=?, requirements=?, tags=?, has_ticket=?, comprehensive_score=?,
             conduct_score=?, innovation_score=?, signup_deadline=?, min_team_member=?,
-            max_team_member=?, max_participants=?, status=?
+            max_team_member=?, max_participants=?, status=?, article=?, cover_image=?
             WHERE id=?""",
         (body.title, body.type, body.organizer_id, body.start_time, body.end_time, body.location,
          body.description, body.requirements, body.tags, body.has_ticket,
          body.comprehensive_score, body.conduct_score, body.innovation_score,
          body.signup_deadline, body.min_team_member, body.max_team_member,
-         body.max_participants, body.status, activity_id),
+         body.max_participants, body.status, body.article, body.cover_image, activity_id),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
@@ -244,4 +261,25 @@ def generate_article(activity_id: int, body: ArticleGenReq):
             f"- 时间：{act.get('start_time', '') or '待定'}\n"
             f"- 地点：{act.get('location', '') or '待定'}"
         )
+    return ok({"content": content})
+
+
+class PolishReq(BaseModel):
+    content: str
+    style: str = "简约"
+
+
+@router.post("/{activity_id}/polish-article")
+def polish_article(activity_id: int, body: PolishReq):
+    """润色：调网关改写已有推文，保持信息不变只优化表达。"""
+    try:
+        resp = requests.post(
+            f"{GATEWAY_URL}/api/ai/polish-article",
+            json={"content": body.content, "style": body.style},
+            timeout=75,
+        )
+        resp.raise_for_status()
+        content = resp.json().get("content", body.content)
+    except Exception:
+        content = body.content  # 网关不可用，原样返回
     return ok({"content": content})
