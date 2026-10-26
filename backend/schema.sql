@@ -1,7 +1,7 @@
 -- 校园活动智能通知&报名助理 数据库 schema v1.5
 -- SQLite 版本;与飞书《数据库 Schema v1.5》文档保持一致
 -- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
--- v1.5 备注(10-20 变更申请):activities 新增 article(AI推文展示)、cover_image(卡片流封面)(POD-1 申请,PM 批准)
+-- v1.5 备注(10-20 变更申请):activities 新增 article(AI推文展示)、cover_image(卡片流封面)(POD-1 申请,PM 批准);users/organizers 新增 avatar(账号管理头像,变更记录 #17,10-26 PM 追认补记)
 -- v1.3 备注(10-11 变更申请):faqs 改 status 枚举 published/draft、category 按活动类型口径、新增 origin_title;新增 qa_logs 表(POD-1 申请,PM 批准)
 -- v1.4 备注(10-19 新增):新增 activity_scores 打分结果表(POD-2 登录/画像/推荐,记录用户-比赛-各项得分)
 -- 10-12 修正(POD-2 指出):时间默认值 datetime(now) → datetime('now'),不加引号会被 SQLite 当列名解析为 NULL
@@ -20,6 +20,7 @@ CREATE TABLE users (
     grade TEXT,                             -- 年级(推荐匹配用)
     interests TEXT,                         -- 兴趣标签,逗号分隔
     skills TEXT,                            -- 技能标签,逗号分隔
+    avatar TEXT,                            -- 头像(base64/URL,账号管理 #17 追认)
     need_comprehensive_score INTEGER,       -- 综合素养评定积分画像(0/1 是否需要)
     need_conduct_score INTEGER,             -- 操行分画像(0/1)
     need_innovation_score INTEGER,          -- 创新分画像(0/1)
@@ -34,6 +35,7 @@ CREATE TABLE organizers (
     password_hash TEXT NOT NULL,            -- 密码哈希
     name TEXT NOT NULL,                     -- 发布者姓名
     organization TEXT,                      -- 组织/社团
+    avatar TEXT,                            -- 头像(base64/URL,账号管理 #17 追认)
     created_at TEXT DEFAULT (datetime('now'))
 );
 
