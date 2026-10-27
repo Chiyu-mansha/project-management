@@ -1,60 +1,85 @@
-"""SQLite persistence for the POD-3 credential service.
-
-The users and activities tables belong to POD-2 and POD-1 respectively. This
-module only initializes POD-3-owned tables and never creates or writes those
-shared-domain tables.
-"""
-
-from __future__ import annotations
-
-import json
 import sqlite3
-from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+
+BASE_DIR = Path(__file__).parent
+DB_PATH = BASE_DIR / "campus.db"   # PM 合并仪式统一:与 POD-2 db.py 共用同一个库文件(原 app.db)
+SCHEMA_PATH = BASE_DIR / "schema.sql"
 
 
-class Database:
-    def __init__(self, path: str | Path, schema_path: str | Path):
-        self.path = str(path)
-        self.schema_path = Path(schema_path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self.initialize()
+def get_conn():
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    return conn
 
-    def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
 
-    def initialize(self) -> None:
-        with closing(self.connect()) as connection:
-            connection.executescript(self.schema_path.read_text(encoding="utf-8"))
+def init_db():
+    with open(SCHEMA_PATH, encoding="utf-8") as f:
+        schema = f.read()
+    conn = get_conn()
+    try:
+        conn.executescript(schema)
+    except Exception:
+        pass  # 表已存在时忽略，保证幂等
+    # 兼容评论里约定的 category/status：老库没有就补列
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(faqs)").fetchall()]
+    if "category" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN category TEXT DEFAULT ''")
+    if "status" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN status TEXT DEFAULT 'published'")
+    if "origin_title" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN origin_title TEXT DEFAULT ''")
+    if "updated_at" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN updated_at TEXT")
+    # 答疑日志表：用于统计高频提问、自动沉淀候选（本地新增，不动共享 schema）
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS qa_logs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            activity_id INTEGER,
+            question    TEXT NOT NULL,
+            answer      TEXT,
+            source      TEXT,
+            count       INTEGER DEFAULT 1,
+            created_at  TEXT
+        )"""
+    )
+    qa_cols = [r[1] for r in conn.execute("PRAGMA table_info(qa_logs)").fetchall()]
+    if "count" not in qa_cols:
+        conn.execute("ALTER TABLE qa_logs ADD COLUMN count INTEGER DEFAULT 1")
+    # 活动表迁移：老库是 v1.0 结构(organizer/type/status 等)，新 schema v1.3
+    # 新增 organizer_id 等字段；缺列则补列，保证旧 app.db 也能跑
+    try:
+        act_cols = [r[1] for r in conn.execute("PRAGMA table_info(activities)").fetchall()]
+        _need = {
+            "type": "TEXT",
+            "organizer_id": "INTEGER",
+            "start_time": "TEXT",
+            "end_time": "TEXT",
+            "location": "TEXT",
+            "description": "TEXT",
+            "requirements": "TEXT",
+            "tags": "TEXT",
+            "has_ticket": "INTEGER DEFAULT 1",
+            "comprehensive_score": "INTEGER",
+            "conduct_score": "REAL",
+            "innovation_score": "REAL",
+            "signup_deadline": "TEXT",
+            "min_team_member": "INTEGER DEFAULT 1",
+            "max_team_member": "INTEGER DEFAULT 1",
+            "max_participants": "INTEGER",
+            "status": "TEXT DEFAULT 'draft'",
+            "article": "TEXT",
+            "cover_image": "TEXT",
+            "created_at": "TEXT",
+        }
+        for _c, _t in _need.items():
+            if _c not in act_cols:
+                conn.execute(f"ALTER TABLE activities ADD COLUMN {_c} {_t}")
+        # 兼容老字段名：organizer(文本主办方) -> 保留；新代码用 organizer_id
+    except Exception:
+        pass
+    conn.commit()
+    conn.close()
 
-    @contextmanager
-    def transaction(self) -> Iterator[sqlite3.Connection]:
-        connection = self.connect()
-        try:
-            yield connection
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
-    @staticmethod
-    def row(row: sqlite3.Row | None) -> dict[str, Any] | None:
-        return dict(row) if row is not None else None
-
-    @staticmethod
-    def decode_user(row: dict[str, Any] | None) -> dict[str, Any] | None:
-        if row is None:
-            return None
-        result = dict(row)
-        for field in ("roles", "organization_ids"):
-            value = result.get(field)
-            if isinstance(value, str):
-                result[field] = json.loads(value or "[]")
-        return result
+def dict_row(row):
+    return dict(row) if row is not None else None

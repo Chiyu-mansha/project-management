@@ -1,14 +1,21 @@
 # 前端
 node_modules/
 dist/
+output/playwright/
 
 # 后端
 venv/
 __pycache__/
 *.pyc
 *.db
+*.db.bak-*
+*.db.bak
+uploads/
+backend/storage/
 
 # 密钥
 .env
+.venv/
 
-backend/storage/
+# 本地分工/规划文档(不入库)
+POD-1分工方案.md

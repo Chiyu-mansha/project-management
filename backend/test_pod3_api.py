@@ -3,49 +3,78 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 import tempfile
 import unittest
-import uuid
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
 
-class Pod3FormalApiTest(unittest.TestCase):
+class Pod3MainIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.temp_dir = tempfile.TemporaryDirectory(prefix="pod3-api-test-")
-        os.environ["POD3_DB_PATH"] = os.path.join(cls.temp_dir.name, "pod3.db")
-        os.environ["POD3_STORAGE_ROOT"] = os.path.join(cls.temp_dir.name, "storage")
-        os.environ["AUTH_SERVICE_URL"] = ""
-        os.environ["ACTIVITY_SERVICE_URL"] = ""
-        os.environ["USER_SERVICE_URL"] = ""
+        cls.temp_dir = tempfile.TemporaryDirectory(prefix="pod3-main-")
+        db_path = Path(cls.temp_dir.name) / "campus.db"
+        os.environ["POD3_STORAGE_ROOT"] = str(Path(cls.temp_dir.name) / "storage")
+        import db
+
+        db.DB_PATH = db_path
+        db.init_db()
+        import credentials
+
+        credentials.init_pod3_tables()
         import main
 
         cls.app = main.app
-        cls.database = main.database
-        connection = cls.database.connect()
-        try:
-            existing_tables = {
-                row[0]
-                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-            }
-        finally:
-            connection.close()
-        if existing_tables.intersection({"users", "activities"}):
-            raise AssertionError("POD-3 schema must not create shared users/activities tables")
-        with cls.database.transaction() as connection:
-            # This table is owned and populated by POD-1 in the integrated
-            # database. The POD-3 schema must not create it.
-            connection.execute(
-                """
-                CREATE TABLE activities (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    organizer_id TEXT NOT NULL,
-                    organizer_name TEXT,
-                    comprehensive_score REAL,
-                    status TEXT NOT NULL DEFAULT 'published'
-                )
-                """
-            )
+        cls.db = db
+        cls.credentials = credentials
+
+        org_id = db.execute(
+            "INSERT INTO organizers (account, password_hash, name) VALUES (?, ?, ?)",
+            ("org-001", "hash", "发布者甲"),
+        )
+        student_id = db.execute(
+            "INSERT INTO users (password_hash, name, student_id) VALUES (?, ?, ?)",
+            ("hash", "学生甲", "20230001"),
+        )
+        outsider_id = db.execute(
+            "INSERT INTO users (password_hash, name, student_id) VALUES (?, ?, ?)",
+            ("hash", "学生乙", "20230002"),
+        )
+        activity_id = db.execute(
+            "INSERT INTO activities (title, organizer_id, status, min_team_member, max_team_member, comprehensive_score) "
+            "VALUES (?, ?, 'published', 1, 1, 1)",
+            ("第5周联调活动", org_id),
+        )
+        form_id = db.execute(
+            "INSERT INTO forms (activity_id, organizer_id, form_team_schema, form_member_schema) VALUES (?, ?, '[]', '[]')",
+            (activity_id, org_id),
+        )
+        extra = json.dumps(
+            {
+                "team_extra": {},
+                "members": [{"role": "captain", "member_extra": {"student_id": "20230001"}}],
+            },
+            ensure_ascii=False,
+        )
+        reg_id = db.execute(
+            "INSERT INTO registrations (activity_id, user_id, form_id, extra_fields) VALUES (?, ?, ?, ?)",
+            (activity_id, student_id, form_id, extra),
+        )
+        db.execute(
+            "INSERT INTO registration_members (registration_id, user_id, role, activity_id) VALUES (?, ?, 'captain', ?)",
+            (reg_id, student_id, activity_id),
+        )
+        cls.org_id = org_id
+        cls.student_id = student_id
+        cls.outsider_id = outsider_id
+        cls.activity_id = activity_id
+        cls.student_auth = {"Authorization": f"Bearer student:{student_id}"}
+        cls.outsider_auth = {"Authorization": f"Bearer student:{outsider_id}"}
+        cls.org_auth = {"Authorization": f"Bearer organizer:{org_id}"}
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -87,62 +116,76 @@ class Pod3FormalApiTest(unittest.TestCase):
         )
         response_status = next(message["status"] for message in sent if message["type"] == "http.response.start")
         response_body = b"".join(message.get("body", b"") for message in sent if message["type"] == "http.response.body")
-        return response_status, json.loads(response_body)
+        return response_status, json.loads(response_body or b"{}")
 
-    def test_required_pod3_flow(self) -> None:
-        user_id = str(uuid.uuid4())
-        activity_id = str(uuid.uuid4())
-        os.environ["POD3_TEST_TOKENS"] = json.dumps(
-            {"organizer-token": {"sub": user_id, "roles": ["STUDENT", "ORGANIZER"]}}
+    def test_shared_auth_and_registration_gate(self) -> None:
+        status, body = self.request("GET", "/api/credentials")
+        self.assertEqual(status, 401)
+
+        status, body = self.request(
+            "POST",
+            f"/api/activities/{self.activity_id}/checkin",
+            {"channel": "QR"},
+            self.outsider_auth,
         )
-        with self.database.transaction() as connection:
-            connection.execute(
-                "INSERT INTO activities (id, title, organizer_id, organizer_name, comprehensive_score) VALUES (?, ?, ?, ?, ?)",
-                (activity_id, "POD-3 联调活动", user_id, "POD-3 组织方", 2.0),
-            )
-        auth = {"Authorization": "Bearer organizer-token"}
+        self.assertEqual(status, 403)
+        self.assertIn("报名", body.get("message", ""))
 
         status, issued = self.request(
             "POST",
-            f"/api/activities/{activity_id}/checkin",
-            {"student_id": user_id, "channel": "QR", "title": "POD-3 联调活动"},
-            {**auth, "Idempotency-Key": "formal-checkin-001"},
+            f"/api/activities/{self.activity_id}/checkin",
+            {"channel": "QR"},
+            self.student_auth,
         )
         self.assertEqual(status, 201)
-        credential_id = issued["credential"]["id"]
+        self.assertEqual(issued["code"], 0)
+        credential_id = issued["data"]["credential"]["id"]
 
-        status, checkins = self.request("GET", f"/api/activities/{activity_id}/checkin-list", headers=auth)
-        self.assertEqual(status, 200)
-        self.assertEqual(len(checkins["items"]), 1)
-
-        status, _ = self.request("POST", f"/api/activities/{activity_id}/confirm", {"credential_ids": [credential_id]}, auth)
+        status, replay = self.request(
+            "POST",
+            f"/api/activities/{self.activity_id}/checkin",
+            {"channel": "QR"},
+            self.student_auth,
+        )
         self.assertEqual(status, 201)
-        status, signed = self.request("POST", f"/api/credentials/{credential_id}/sign", {"seal_id": str(uuid.uuid4())}, auth)
-        self.assertEqual(status, 200)
-        self.assertEqual(signed["credential"]["status"], "SEALED")
+        self.assertTrue(replay["data"]["replayed"])
 
-        status, warehouse = self.request("GET", "/api/credentials", headers=auth)
-        self.assertEqual(status, 200)
-        self.assertEqual(warehouse["items"][0]["status"], "SEALED")
-        status, pdf = self.request("GET", f"/api/credentials/{credential_id}/pdf", headers=auth)
-        self.assertEqual(status, 200)
-        self.assertEqual(len(pdf["sha256"]), 64)
-        status, export = self.request("GET", "/api/credentials/export", headers=auth)
-        self.assertEqual(status, 202)
-        self.assertEqual(export["row_count"], 1)
-        status, organizer_export = self.request("GET", f"/api/credentials/export?activity_id={activity_id}&format=XLSX", headers=auth)
-        self.assertEqual(status, 202)
-        self.assertEqual(organizer_export["export_type"], "ORGANIZER_BONUS_LIST")
-        self.assertTrue(organizer_export["download"]["download_url"].endswith(".xlsx"))
-
-    def test_simple_token_and_role_guards(self) -> None:
-        user_id = str(uuid.uuid4())
-        os.environ["POD3_TEST_TOKENS"] = json.dumps({"student-token": {"sub": user_id, "roles": ["STUDENT"]}})
-        auth = {"Authorization": "Bearer student-token"}
-        status, _ = self.request("GET", f"/api/activities/{uuid.uuid4()}/checkin-list", headers=auth)
+        status, denied = self.request(
+            "GET",
+            f"/api/activities/{self.activity_id}/checkin-list",
+            headers=self.student_auth,
+        )
         self.assertEqual(status, 403)
-        status, _ = self.request("GET", "/api/credentials")
-        self.assertEqual(status, 401)
+
+        status, listing = self.request(
+            "GET",
+            f"/api/activities/{self.activity_id}/checkin-list",
+            headers=self.org_auth,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(listing["data"]["items"]), 1)
+
+        status, confirmed = self.request(
+            "POST",
+            f"/api/activities/{self.activity_id}/confirm",
+            {"credential_ids": [credential_id]},
+            self.org_auth,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(confirmed["data"]["status"], "confirmed")
+
+        status, signed = self.request(
+            "POST",
+            f"/api/credentials/{credential_id}/sign",
+            {"seal_id": "week5"},
+            self.org_auth,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(signed["data"]["credential"]["status"], "signed")
+
+        status, warehouse = self.request("GET", "/api/credentials", headers=self.student_auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(warehouse["data"]["items"][0]["status"], "signed")
 
 
 if __name__ == "__main__":

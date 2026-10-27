@@ -1,0 +1,43 @@
+.registration-domain { color: #303133; }
+.domain-home, .domain-page { max-width: 1080px; margin: 0 auto; padding: 24px; }
+.dialog-heading, .section-heading, .page-heading, .registration-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dialog-heading h2, .page-heading h2 { margin: 0; font-size: 20px; }
+.page-heading { justify-content: flex-start; margin-bottom: 24px; }
+.heading-actions { display: flex; align-items: center; gap: 8px; }
+.heading-actions .el-button + .el-button { margin-left: 0; }
+.form-section { padding-top: 16px; margin-top: 16px; border-top: 1px solid #ebeef5; }
+.form-section h3, .expanded-members h3 { font-size: 16px; margin: 0 0 16px; }
+.section-heading h3 { margin: 0; }
+.section-heading { margin-bottom: 16px; flex-wrap: wrap; }
+.metadata { display: flex; flex-wrap: wrap; gap: 12px 24px; padding: 14px; background: #f5f7fa; border-radius: 6px; }
+.muted, .row-meta { color: #606266; font-size: 14px; }
+.question-row, .member-card { margin-bottom: 16px; padding: 16px; border: 1px solid #dcdfe6; border-radius: 6px; }
+.question-row { display: flex; justify-content: space-between; gap: 12px; }
+.fixed-question { background: #f5f7fa; }
+.question-controls { display: flex; gap: 12px; align-items: flex-end; width: 100%; }
+.question-controls label > span { display: block; margin-bottom: 8px; }
+.question-controls .grow { flex: 1; min-width: 160px; }
+.question-controls .el-select { width: 130px; }
+.answer-field { margin-top: 16px; }
+.answer-field > label { display: block; margin-bottom: 8px; }
+.required-mark { color: #f56c6c; margin-right: 4px; }
+.feedback { margin-bottom: 16px; }
+.registration-row { border-bottom: 1px solid #ebeef5; padding: 20px 0; }
+.registration-row h3 { font-size: 16px; margin: 0 0 10px; }
+.row-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.answers-view { margin: 12px 0 0; }
+.answers-view > div { display: grid; grid-template-columns: minmax(90px, 25%) 1fr; gap: 16px; padding: 10px 0; }
+.answers-view dt { color: #606266; }
+.answers-view dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.preserve-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.expanded-members { padding: 16px; }
+.domain-page .el-pagination { margin-top: 24px; justify-content: center; }
+@media (max-width: 640px) {
+  .domain-home, .domain-page { padding: 16px; }
+  .dialog-heading { align-items: flex-start; }
+  .heading-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .question-controls { flex-wrap: wrap; align-items: center; }
+  .question-controls .grow { flex-basis: 100%; }
+  .question-row { flex-wrap: wrap; }
+  .registration-row { align-items: flex-start; }
+}
