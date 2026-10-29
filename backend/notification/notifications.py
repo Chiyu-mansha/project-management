@@ -6,6 +6,7 @@
 - POST /api/notifications                   创建通知（供内部调用，无需用户 Token）
 - PUT  /api/notifications/{id}/read         标记已读（需登录）
 - POST /api/notifications/check-deadlines   截止前 24h 预警扫描（手动触发/定时任务）
+- POST /api/notifications/check-lottery     开奖提醒扫描（手动触发/定时任务）
 """
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -148,3 +149,46 @@ def _do_check_deadlines() -> int:
 @router.post("/check-deadlines")
 def check_deadlines():
     return {"code": 0, "data": {"created": _do_check_deadlines()}}
+
+
+# ---------- 开奖提醒（供定时任务调用） ----------
+
+def _do_check_lottery() -> int:
+    """扫描状态为 finished 的活动，给已报名学生发开奖提醒。"""
+    rows = db.query_all(
+        """
+        SELECT a.id AS activity_id, a.title, r.user_id
+        FROM activities a
+        JOIN registrations r ON r.activity_id = a.id
+        WHERE a.status = 'finished'
+        """
+    )
+    created = 0
+    for r in rows:
+        content = f"您报名的《{r['title']}》已结束，获奖名单已出炉，请前往活动详情页查看结果！"
+        # 去重校验
+        existing = db.query_one(
+            """
+            SELECT id FROM notifications
+            WHERE user_id = ? AND activity_id = ? AND type = '开奖提醒'
+            """,
+            (r["user_id"], r["activity_id"]),
+        )
+        if existing:
+            continue
+        
+        db.execute(
+            """
+            INSERT INTO notifications (user_id, activity_id, type, content, is_read)
+            VALUES (?, ?, '开奖提醒', ?, 0)
+            """,
+            (r["user_id"], r["activity_id"], content),
+        )
+        created += 1
+    return created
+
+
+@router.post("/check-lottery")
+def check_lottery():
+    """手动触发开奖提醒扫描（方便测试）"""
+    return {"code": 0, "data": {"created": _do_check_lottery()}}
