@@ -28,6 +28,15 @@
       <el-form-item label="标签">
         <el-input v-model="form.tags" placeholder="逗号分隔，如：篮球,体育" />
       </el-form-item>
+      <el-form-item label="封面图">
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          <el-upload :show-file-list="false" :http-request="uploadCover" accept="image/*">
+            <img v-if="form.cover_image" :src="form.cover_image" class="cover-preview" alt="封面" />
+            <div v-else class="cover-placeholder">+ 上传封面</div>
+          </el-upload>
+          <el-button @click="openCoverDlg">🎨 AI 生成</el-button>
+        </div>
+      </el-form-item>
       <el-form-item label="报名截止">
         <el-date-picker v-model="form.signup_deadline" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="选择报名截止时间" style="width:100%" />
       </el-form-item>
@@ -69,6 +78,14 @@
         <el-button @click="$router.back()">取消</el-button>
       </el-form-item>
     </el-form>
+
+    <el-dialog v-model="coverDlg" title="🎨 AI 生成封面" width="480px">
+      <el-input v-model="coverPrompt" type="textarea" :rows="3" placeholder="描述你想要的封面，如：青春活力的篮球赛海报，蓝色调" />
+      <template #footer>
+        <el-button @click="coverDlg = false">取消</el-button>
+        <el-button type="primary" :loading="coverLoading" @click="generateCover">生成</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -107,7 +124,7 @@ const form = reactive({
   description: '', requirements: '', tags: '', signup_deadline: '',
   min_team_member: 1, max_team_member: 1, max_participants: null,
   has_ticket: 1, comprehensive_score: 0, conduct_score: null, innovation_score: null,
-  status: 'draft',
+  cover_image: '', status: 'draft',
 })
 
 // 不提供综测加分时，清空分值（输入框同时被禁用）
@@ -115,6 +132,57 @@ const onScoreSwitch = () => {
   if (form.comprehensive_score !== 1) {
     form.conduct_score = null
     form.innovation_score = null
+  }
+}
+
+// 上传封面图
+const uploadCover = async ({ file }) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  try {
+    const r = await fetch(`${API}/api/upload`, { method: 'POST', body: fd })
+    const d = await r.json()
+    if (d.code === 0) {
+      form.cover_image = `${API}${d.data.url}`
+      ElMessage.success('封面已上传')
+    } else {
+      ElMessage.error(d.message || '上传失败')
+    }
+  } catch {
+    ElMessage.error('上传失败')
+  }
+}
+
+// AI 生成封面
+const coverDlg = ref(false)
+const coverPrompt = ref('')
+const coverLoading = ref(false)
+
+const openCoverDlg = () => {
+  coverPrompt.value = `${form.title || '校园活动'}${form.type ? '，' + form.type : ''}主题海报，简洁现代风格`
+  coverDlg.value = true
+}
+
+const generateCover = async () => {
+  if (!coverPrompt.value.trim()) return ElMessage.warning('请输入封面描述')
+  coverLoading.value = true
+  try {
+    const r = await fetch(`${API}/api/activities/generate-cover`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: coverPrompt.value }),
+    })
+    const d = await r.json()
+    if (d.code === 0) {
+      form.cover_image = `${API}${d.data.url}`
+      ElMessage.success('封面已生成')
+      coverDlg.value = false
+    } else {
+      ElMessage.error(d.message || '生成失败')
+    }
+  } catch {
+    ElMessage.error('生成失败')
+  } finally {
+    coverLoading.value = false
   }
 }
 
@@ -156,4 +224,6 @@ const save = async () => {
 <style scoped>
 .form-wrap{max-width:680px;margin:0 auto}
 .head{margin:0 0 18px;font-size:20px}
+.cover-preview{width:200px;height:112px;object-fit:cover;border-radius:8px;display:block}
+.cover-placeholder{width:200px;height:112px;border:1px dashed #d9d9d9;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#999;cursor:pointer}
 </style>
