@@ -29,12 +29,12 @@
         <el-input v-model="form.tags" placeholder="逗号分隔，如：篮球,体育" />
       </el-form-item>
       <el-form-item label="封面图">
-        <div style="display:flex;gap:12px;align-items:flex-start">
+        <div style="display:flex;gap:12px;align-items:center">
           <el-upload :show-file-list="false" :http-request="uploadCover" accept="image/*">
             <img v-if="form.cover_image" :src="form.cover_image" class="cover-preview" alt="封面" />
             <div v-else class="cover-placeholder">+ 上传封面</div>
           </el-upload>
-          <el-button @click="openCoverDlg">🎨 AI 生成</el-button>
+          <el-button v-if="form.cover_image" @click="removeCover">移除</el-button>
         </div>
       </el-form-item>
       <el-form-item label="报名截止">
@@ -78,14 +78,6 @@
         <el-button @click="$router.back()">取消</el-button>
       </el-form-item>
     </el-form>
-
-    <el-dialog v-model="coverDlg" title="🎨 AI 生成封面" width="480px">
-      <el-input v-model="coverPrompt" type="textarea" :rows="3" placeholder="描述你想要的封面，如：青春活力的篮球赛海报，蓝色调" />
-      <template #footer>
-        <el-button @click="coverDlg = false">取消</el-button>
-        <el-button type="primary" :loading="coverLoading" @click="generateCover">生成</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -153,37 +145,9 @@ const uploadCover = async ({ file }) => {
   }
 }
 
-// AI 生成封面
-const coverDlg = ref(false)
-const coverPrompt = ref('')
-const coverLoading = ref(false)
-
-const openCoverDlg = () => {
-  coverPrompt.value = `${form.title || '校园活动'}${form.type ? '，' + form.type : ''}主题海报，简洁现代风格`
-  coverDlg.value = true
-}
-
-const generateCover = async () => {
-  if (!coverPrompt.value.trim()) return ElMessage.warning('请输入封面描述')
-  coverLoading.value = true
-  try {
-    const r = await fetch(`${API}/api/activities/generate-cover`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: coverPrompt.value }),
-    })
-    const d = await r.json()
-    if (d.code === 0) {
-      form.cover_image = `${API}${d.data.url}`
-      ElMessage.success('封面已生成')
-      coverDlg.value = false
-    } else {
-      ElMessage.error(d.message || '生成失败')
-    }
-  } catch {
-    ElMessage.error('生成失败')
-  } finally {
-    coverLoading.value = false
-  }
+// 移除封面，保存后卡片回到默认 emoji
+const removeCover = () => {
+  form.cover_image = ''
 }
 
 onMounted(async () => {

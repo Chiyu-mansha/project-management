@@ -24,7 +24,6 @@
 import json
 import os
 import re
-import time
 from pathlib import Path
 
 import requests
@@ -58,42 +57,6 @@ SYSTEM_EDITOR = (
     "语言贴近大学生，适度 emoji；只写活动信息里有的内容，不编造；300~500 字。"
 )
 SYSTEM_QA = "你是一名校园活动智能助手，只回答校园活动、竞赛、电子票、综测加分相关问题，无关问题礼貌拒绝。"
-
-# ---------- AI 生图（通义万相，文生图） ----------
-
-WANX_API_KEY = os.getenv("WANX_API_KEY", "")
-WANX_MODEL = os.getenv("WANX_MODEL", "wanx2.1-t2i-turbo")
-
-
-def generate_image(prompt: str) -> str:
-    """文生图：调通义万相，返回图片临时 URL。"""
-    if not WANX_API_KEY:
-        raise RuntimeError("未配置 WANX_API_KEY")
-    # 1. 创建生图任务（异步）
-    resp = requests.post(
-        "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
-        headers={"Authorization": f"Bearer {WANX_API_KEY}", "X-DashScope-Async": "enable"},
-        json={"model": WANX_MODEL, "input": {"prompt": prompt}, "parameters": {"size": "1024*1024", "n": 1}},
-        timeout=30,
-    )
-    resp.raise_for_status()
-    task_id = resp.json()["output"]["task_id"]
-    # 2. 轮询任务结果
-    for _ in range(24):  # 最多等约 120 秒
-        time.sleep(5)
-        tr = requests.get(
-            f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}",
-            headers={"Authorization": f"Bearer {WANX_API_KEY}"},
-            timeout=30,
-        )
-        tr.raise_for_status()
-        out = tr.json().get("output", {})
-        status = out.get("task_status")
-        if status == "SUCCEEDED":
-            return out["results"][0]["url"]
-        if status in ("FAILED", "CANCELED", "UNKNOWN"):
-            raise RuntimeError(f"生图失败：{out.get('message', status)}")
-    raise RuntimeError("生图超时")
 
 
 def _chat_completion(prompt: str, system: str = "") -> str:

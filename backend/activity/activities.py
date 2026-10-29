@@ -8,7 +8,6 @@
 """
 import os
 import threading
-import uuid
 from datetime import datetime
 from typing import Optional
 
@@ -23,7 +22,6 @@ router = APIRouter(prefix="/api/activities", tags=["activities"])
 
 GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8100").rstrip("/")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
 
 
 def _trigger_faq_extract(activity_id: int):
@@ -285,39 +283,3 @@ def polish_article(activity_id: int, body: PolishReq):
     except Exception:
         content = body.content  # 网关不可用，原样返回
     return ok({"content": content})
-
-
-class CoverGenReq(BaseModel):
-    prompt: str
-
-
-@router.post("/generate-cover")
-def generate_cover(body: CoverGenReq):
-    """AI 生成封面：调网关文生图，下载存本地，返回可访问 URL。"""
-    if not body.prompt.strip():
-        fail(400, "请先输入封面描述")
-    # 1. 调网关生图
-    try:
-        resp = requests.post(
-            f"{GATEWAY_URL}/api/ai/generate-image",
-            json={"prompt": body.prompt},
-            timeout=150,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        img_url = data.get("url", "")
-        if not img_url:
-            fail(502, data.get("error") or "AI 生图失败")
-    except Exception as e:
-        fail(502, f"AI 生图失败：{e}")
-    # 2. 下载图片存本地
-    try:
-        os.makedirs(UPLOAD_DIR, exist_ok=True)
-        img = requests.get(img_url, timeout=60)
-        img.raise_for_status()
-        fname = f"cover_{uuid.uuid4().hex}.png"
-        with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
-            f.write(img.content)
-        return ok({"url": f"/uploads/{fname}"})
-    except Exception as e:
-        fail(502, f"封面图片下载失败：{e}")
