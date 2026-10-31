@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from database import get_conn, dict_row
 from auth import require_role
 from .llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
@@ -18,6 +18,8 @@ class AskIn(BaseModel):
     activity_id: Optional[int] = None
     question: str
     no_cache: Optional[bool] = False  # 重新生成：跳过 FAQ，直接走大模型
+    # 最近几轮对话，前端按 [{role:'user'|'assistant', content:str}] 传入
+    history: Optional[List[dict]] = []
 
 
 class AcceptIn(BaseModel):
@@ -57,12 +59,66 @@ def _is_degraded_answer(answer: str) -> bool:
     return (answer or "").lstrip().startswith(_MOCK_ANSWER_PREFIXES)
 
 
+MAX_HISTORY_TURNS = 8
+
+
+def _clean_history(history) -> list:
+    """只保留最近 N 轮 user/assistant 文本，防止前端传入过长或非法结构。"""
+    if not isinstance(history, list):
+        return []
+    cleaned = []
+    for item in history[-MAX_HISTORY_TURNS:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "")).strip()
+        content = str(item.get("content", "")).strip()
+        if role in ("user", "assistant") and content:
+            cleaned.append({"role": role, "content": content[:2000]})
+    return cleaned
+
+
+def _activity_context(conn, activity_id) -> str:
+    """把当前活动关键信息压缩成一段上下文，供大模型回答时引用。"""
+    if activity_id is None:
+        return ""
+    row = conn.execute(
+        """SELECT title,type,location,start_time,end_time,signup_deadline,
+                  description,requirements,comprehensive_score,conduct_score,innovation_score
+           FROM activities WHERE id=?""",
+        (activity_id,),
+    ).fetchone()
+    if not row:
+        return ""
+    a = dict_row(row)
+    lines = [
+        f"活动标题：{a.get('title') or '未知'}",
+        f"类型：{a.get('type') or '未知'}",
+        f"地点：{a.get('location') or '待定'}",
+        f"开始时间：{a.get('start_time') or '待定'}",
+        f"结束时间：{a.get('end_time') or '待定'}",
+        f"报名截止：{a.get('signup_deadline') or '待定'}",
+        f"活动简介：{a.get('description') or '无'}",
+        f"报名条件：{a.get('requirements') or '无'}",
+    ]
+    scores = []
+    if a.get("comprehensive_score"):
+        scores.append("可加综合素养积分")
+    if a.get("conduct_score"):
+        scores.append(f"操行分 {a['conduct_score']}")
+    if a.get("innovation_score"):
+        scores.append(f"创新分 {a['innovation_score']}")
+    lines.append(f"加分：{'；'.join(scores) if scores else '无'}")
+    return "\n".join(lines)
+
+
 @router.post("/ask")
 def ask(body: AskIn):
     q = (body.question or "").strip()
     if not q:
         return {"answer": "问题不能为空", "source": "faq", "faq_id": None}
     conn = get_conn()
+    history = _clean_history(body.history)
+    activity_context = _activity_context(conn, body.activity_id)
     # 1. 先查 FAQ（重新生成时 no_cache=True 跳过）
     #    选了具体活动 → 先查该活动，没有再查通用(activity_id 为空)；都不跨到别的活动
     #    未选活动   → 在整个知识库搜索（所有活动 + 通用）
@@ -100,8 +156,9 @@ def ask(body: AskIn):
         conn.commit(); conn.close()
         return {"answer": d["answer"], "source": "faq", "faq_id": d["id"]}
     # 2. 未命中 → 先看 7 天内同样归一化问题有没有 llm 缓存，有直接复用，不调网关
+    #    多轮追问不读缓存：同一句话在不同上下文下答案可能不同。
     nq = _norm(q)
-    if not body.no_cache:
+    if not body.no_cache and not history:
         # 归一化比对：日志存的是原问题，逐条归一化后比；同活动/同全局范围
         logs = conn.execute(
             """SELECT question, answer FROM qa_logs WHERE source='llm'
@@ -119,12 +176,19 @@ def ask(body: AskIn):
             conn.commit(); conn.close()
             return {"answer": cached, "source": "llm", "faq_id": None, "cached": True}
     # 3. 无缓存 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
-    result = chat(q, body.activity_id)
+    result = chat(q, body.activity_id, history=history, activity_context=activity_context or None)
     answer = result["answer"]
     source = result.get("source", "llm")
     # 关键：降级 Mock 不写 source='llm'，因此不会被上面的 7 天缓存命中；
     # 仍保留一条 source='mock' 日志用于统计网关失败率，但不参与候选沉淀。
-    _log(conn, body.activity_id, q, answer, source if source in ("llm", "mock") else "llm")
+    # 带多轮上下文的答案写 llm_ctx，避免后续单轮问题误命中上下文相关答案。
+    if source == "mock":
+        log_source = "mock"
+    elif history:
+        log_source = "llm_ctx"
+    else:
+        log_source = "llm"
+    _log(conn, body.activity_id, q, answer, log_source)
     conn.commit(); conn.close()
     return {"answer": answer, "source": source, "faq_id": None, "cached": False}
 

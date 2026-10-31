@@ -24,11 +24,16 @@ def _post(path: str, payload: dict) -> dict:
 
 # ---------- 能力 1：智能答疑（对话） ----------
 
-def chat(question: str, activity_id=None) -> dict:
+def chat(question: str, activity_id=None, history=None, activity_context=None) -> dict:
     """返回 {"answer": str, "source": "llm"|"mock"}。"""
     if USE_REAL_LLM:
         try:
-            d = _post("/api/ai/chat", {"question": question, "activity_id": activity_id})
+            payload = {"question": question, "activity_id": activity_id}
+            if history:
+                payload["history"] = history
+            if activity_context:
+                payload["activity_context"] = activity_context
+            d = _post("/api/ai/chat", payload)
             return {"answer": d.get("answer", ""), "source": d.get("source", "llm")}
         except Exception as e:
             return {"answer": f"[网关不可用，已降级Mock] {e} | 请查看活动详情页或联系主办方。", "source": "mock"}

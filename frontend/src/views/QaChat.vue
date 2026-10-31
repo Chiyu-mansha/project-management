@@ -156,14 +156,22 @@ onMounted(async () => {
 })
 const newChat = () => { currentId.value = Date.now(); messages.value = []; qa.question = ''; qa.activity_id = ''; conversationName.value = '新对话'; history.value.unshift({ id: currentId.value, title: '新对话', messages: [] }) }
 const selectHistory = (item) => { currentId.value = item.id; messages.value = item.messages || []; conversationName.value = item.title; qa.activity_id = item.activity_id ?? '' }
+const MAX_CONTEXT_MESSAGES = 4
+const buildHistory = (list = messages.value) => list.slice(-MAX_CONTEXT_MESSAGES).flatMap((m) => {
+  const turns = []
+  if (m.question) turns.push({ role: 'user', content: m.question })
+  if (m.answer) turns.push({ role: 'assistant', content: m.answer })
+  return turns
+})
 const ask = async () => {
   if (!qa.question.trim()) return ElMessage.warning('先输入问题')
   const question = qa.question.trim(); loading.value = true
+  const contextHistory = buildHistory()
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 90000)
   try {
-    const answer = await fetchAsk(question, false, ctrl.signal)
-    messages.value.push({ question, ...answer, feedback: null })
+    const answer = await fetchAsk(question, false, ctrl.signal, contextHistory)
+    messages.value.push({ question, ...answer, feedback: null, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id) })
     let current = history.value.find(item => item.id === currentId.value)
     if (!current) { current = { id: currentId.value, title: conversationName.value, messages: messages.value }; history.value.unshift(current) }
     current.messages = messages.value; current.activity_id = qa.activity_id
@@ -171,12 +179,20 @@ const ask = async () => {
     qa.question = ''; await nextTick(); scrollToEnd()
   } catch (e) {
     if (e?.name === 'AbortError') {
-      messages.value.push({ question, answer: 'AI 繁忙，已记录你的问题，稍后重试或联系活动负责人。', source: 'llm', faq_id: null, feedback: null, timeout: true })
+      messages.value.push({ question, answer: 'AI 繁忙，已记录你的问题，稍后重试或联系活动负责人。', source: 'llm', faq_id: null, feedback: null, timeout: true, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id) })
       ElMessage.warning('AI 繁忙，已记录问题，请稍后重试')
     } else { throw e }
   } finally { clearTimeout(timer); loading.value = false }
 }
-const fetchAsk = async (question, noCache, signal) => (await fetch(`${API}/qa/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id), no_cache: noCache }), signal })).json()
+const fetchAsk = async (question, noCache, signal, contextHistory = [], activityId = qa.activity_id) => {
+  const activity_id = activityId === '' || activityId === null || activityId === undefined ? null : Number(activityId)
+  return (await fetch(`${API}/qa/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, activity_id, no_cache: noCache, history: contextHistory }),
+    signal,
+  })).json()
+}
 const scrollToEnd = () => conversationRef.value?.scrollTo({ top: conversationRef.value.scrollHeight, behavior: 'smooth' })
 const copyAnswer = async (message) => {
   try { await navigator.clipboard.writeText(message.answer); ElMessage.success('已复制') } catch { ElMessage.warning('复制失败，请手动选择') }
@@ -193,7 +209,9 @@ const dislike = async (message) => {
 }
 const regenerate = async (message) => {
   ElMessage.info('重新生成中…')
-  const answer = await fetchAsk(message.question, true)
+  const idx = messages.value.indexOf(message)
+  const contextHistory = buildHistory(messages.value.slice(0, idx < 0 ? messages.value.length : idx))
+  const answer = await fetchAsk(message.question, true, undefined, contextHistory, message.activity_id ?? qa.activity_id)
   Object.assign(message, answer, { feedback: null })
   await nextTick(); scrollToEnd()
 }
