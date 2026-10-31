@@ -106,12 +106,12 @@
       </el-table>
     </el-dialog>
 
-    <el-dialog v-model="dislikedDlg" title="👎 被踩待优化" width="760px">
+    <el-dialog v-model="dislikedDlg" title="👎 被踩待优化" width="1000px" top="6vh">
       <p style="color:#888;margin-top:0">这些答案被用户点踩，建议改写后沉淀为 FAQ，或优化知识库/提示词。</p>
       <div style="margin-bottom:10px">
         <el-button size="small" :loading="dislikedLoading" @click="loadDisliked">刷新</el-button>
       </div>
-      <el-table :data="disliked" border size="small" v-loading="dislikedLoading" empty-text="暂无被踩记录">
+      <el-table :data="disliked" border size="default" max-height="60vh" v-loading="dislikedLoading" empty-text="暂无被踩记录">
         <el-table-column prop="activity_title" label="活动" width="150" show-overflow-tooltip />
         <el-table-column prop="question" label="问题" min-width="200" />
         <el-table-column prop="count" label="被踩次数" width="90">
