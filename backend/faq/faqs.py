@@ -1,8 +1,9 @@
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
+from auth import require_role
 
 router = APIRouter(prefix="/api/faqs", tags=["faqs"])
 
@@ -59,7 +60,7 @@ def list_faqs(
 
 
 @router.post("")
-def create_faq(body: FaqIn):
+def create_faq(body: FaqIn, user: dict = Depends(require_role("ORGANIZER"))):
     if not body.question.strip() or not body.answer.strip():
         raise HTTPException(400, "question/answer 不能为空")
     if body.source not in ("manual", "auto", "llm"):
@@ -77,7 +78,7 @@ def create_faq(body: FaqIn):
 
 
 @router.put("/{faq_id}")
-def update_faq(faq_id: int, body: FaqIn):
+def update_faq(faq_id: int, body: FaqIn, user: dict = Depends(require_role("ORGANIZER"))):
     conn = get_conn()
     old = conn.execute("SELECT * FROM faqs WHERE id=?", (faq_id,)).fetchone()
     if not old:
@@ -94,7 +95,7 @@ def update_faq(faq_id: int, body: FaqIn):
 
 
 @router.delete("/{faq_id}")
-def delete_faq(faq_id: int):
+def delete_faq(faq_id: int, user: dict = Depends(require_role("ORGANIZER"))):
     conn = get_conn()
     cur = conn.execute("DELETE FROM faqs WHERE id=?", (faq_id,))
     conn.commit()
@@ -105,7 +106,7 @@ def delete_faq(faq_id: int):
 
 
 @router.post("/from-qa")
-def from_qa(body: FaqIn):
+def from_qa(body: FaqIn, user: dict = Depends(require_role("ORGANIZER"))):
     """答疑沉淀：高频/有用问答一键转 FAQ，source=auto"""
     body.source = "auto"
     return create_faq(body)

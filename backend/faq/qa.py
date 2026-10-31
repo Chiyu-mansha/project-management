@@ -1,9 +1,10 @@
 import re
 from datetime import datetime
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
+from auth import require_role
 from .llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
 
 
@@ -210,7 +211,7 @@ def feedback(body: FeedbackIn):
 
 
 @router.post("/candidates/accept")
-def accept(body: AcceptIn):
+def accept(body: AcceptIn, user: dict = Depends(require_role("ORGANIZER"))):
     """把候选问答沉淀为 FAQ 草稿，等管理员审核。source=auto, status=draft。"""
     conn = get_conn()
     cur = conn.execute(

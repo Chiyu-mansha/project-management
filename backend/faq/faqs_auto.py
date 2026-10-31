@@ -1,9 +1,10 @@
 import re
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn, dict_row
+from auth import require_role
 from .llm_gateway import extract_faq, USE_REAL_LLM, similar_question as gw_similar
 
 router = APIRouter(prefix="/api/faqs", tags=["faqs-auto"])
@@ -81,7 +82,7 @@ class AutoGenIn(BaseModel):
 
 
 @router.post("/auto-generate")
-def auto_generate(body: AutoGenIn):
+def auto_generate(body: AutoGenIn, user: dict = Depends(require_role("ORGANIZER"))):
     """推文发布后调用：AI 从推文内容提取常见问答，以 draft 存入，待管理员审核。"""
     # 调 AI 网关服务提取（未开启/失败自动降级模板）
     items = extract_faq(body.title, body.content, count=5)
@@ -100,7 +101,7 @@ class FromActivityIn(BaseModel):
 
 
 @router.post("/from-activity")
-def from_activity(body: FromActivityIn):
+def from_activity(body: FromActivityIn, user: dict = Depends(require_role("ORGANIZER"))):
     """活动发布后一键提取：按 activity_id 读活动详情，拼成推文内容，提取 3-5 条 draft。
 
     由成员2发布活动后调用（或管理员在 FAQ 页点“一键导入”），粘贴提取入口不变。
