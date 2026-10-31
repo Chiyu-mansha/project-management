@@ -97,7 +97,7 @@
 import { reactive, ref, watch, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, FolderOpened, ArrowDown, Clock, Close, CopyDocument, Refresh } from '@element-plus/icons-vue'
-const API = 'http://localhost:8000'
+const API = import.meta.env.VITE_API_BASE_URL || '/api'
 const qa = reactive({ question: '', activity_id: '' })
 const activities = ref([]); const messages = ref([]); const loading = ref(false); const conversationRef = ref(null)
 const history = ref([]); const currentId = ref(1); const showGroups = ref(false); const conversationName = ref('新对话')
@@ -152,7 +152,7 @@ const restore = () => {
 
 onMounted(async () => {
   restore()
-  try { const d = await (await fetch(`${API}/api/activities`)).json(); activities.value = d.items || [] } catch { activities.value = [] }
+  try { const d = await (await fetch(`${API}/activities`)).json(); activities.value = d.items || [] } catch { activities.value = [] }
 })
 const newChat = () => { currentId.value = Date.now(); messages.value = []; qa.question = ''; qa.activity_id = ''; conversationName.value = '新对话'; history.value.unshift({ id: currentId.value, title: '新对话', messages: [] }) }
 const selectHistory = (item) => { currentId.value = item.id; messages.value = item.messages || []; conversationName.value = item.title; qa.activity_id = item.activity_id ?? '' }
@@ -176,18 +176,18 @@ const ask = async () => {
     } else { throw e }
   } finally { clearTimeout(timer); loading.value = false }
 }
-const fetchAsk = async (question, noCache, signal) => (await fetch(`${API}/api/qa/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id), no_cache: noCache }), signal })).json()
+const fetchAsk = async (question, noCache, signal) => (await fetch(`${API}/qa/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id), no_cache: noCache }), signal })).json()
 const scrollToEnd = () => conversationRef.value?.scrollTo({ top: conversationRef.value.scrollHeight, behavior: 'smooth' })
 const copyAnswer = async (message) => {
   try { await navigator.clipboard.writeText(message.answer); ElMessage.success('已复制') } catch { ElMessage.warning('复制失败，请手动选择') }
 }
 const like = async (message) => {
   message.feedback = message.feedback === 'like' ? null : 'like'
-  if (message.feedback === 'like') { await fetch(`${API}/api/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'like', faq_id: message.faq_id, question: message.question }) }); ElMessage.success('感谢反馈') }
+  if (message.feedback === 'like') { await fetch(`${API}/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'like', faq_id: message.faq_id, question: message.question }) }); ElMessage.success('感谢反馈') }
 }
 const dislike = async (message) => {
   message.feedback = 'dislike'
-  const r = await fetch(`${API}/api/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'dislike', faq_id: message.faq_id, question: message.question }) })
+  const r = await fetch(`${API}/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'dislike', faq_id: message.faq_id, question: message.question }) })
   const d = await r.json()
   ElMessage.warning(d.faq_downgraded ? '已反馈，该条知识库答案已转为待审核' : '已反馈，我们会尽快优化')
 }
