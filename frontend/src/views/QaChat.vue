@@ -152,7 +152,10 @@ const restore = () => {
 
 onMounted(async () => {
   restore()
-  try { const d = await (await fetch(`${API}/activities`)).json(); activities.value = d.items || [] } catch { activities.value = [] }
+  try {
+    const d = await (await fetch(`${API}/activities`)).json()
+    activities.value = d.data?.items || d.items || []
+  } catch { activities.value = [] }
 })
 const newChat = () => { currentId.value = Date.now(); messages.value = []; qa.question = ''; qa.activity_id = ''; conversationName.value = '新对话'; history.value.unshift({ id: currentId.value, title: '新对话', messages: [] }) }
 const selectHistory = (item) => { currentId.value = item.id; messages.value = item.messages || []; conversationName.value = item.title; qa.activity_id = item.activity_id ?? '' }

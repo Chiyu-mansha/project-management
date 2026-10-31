@@ -139,7 +139,7 @@ const buildGroups = (list) => {
 }
 const groupClass = ({ row }) => (groupMap[row.id] % 2 === 0 ? 'grp-a' : 'grp-b')
 
-const loadActivities = async () => { try { const d = await (await callApi(`${API}/activities`)).json(); activities.value = d.items || [] } catch { activities.value = [] } }
+const loadActivities = async () => { try { const d = await (await callApi(`${API}/activities`)).json(); activities.value = d.data?.items || d.items || [] } catch { activities.value = [] } }
 const load = async () => {
   loading.value = true
   try {
@@ -167,7 +167,8 @@ const autoGen = async () => {
     // 直接输入了新活动名称（字符串）→ 先建活动再拿 id
     if (typeof genForm.activity_id === 'string' && genForm.activity_id.trim() !== '') {
       const r = await callApi(`${API}/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: genForm.activity_id.trim() }) })
-      const created = await r.json()
+      const raw = await r.json()
+      const created = raw.data || raw
       genForm.activity_id = created.id
       if (!activities.value.some(a => a.id === created.id)) activities.value.unshift(created)
     }
@@ -215,7 +216,8 @@ const save = async () => {
   // 直接输入了新活动名称（字符串）→ 先建活动再拿 id
   if (typeof body.activity_id === 'string' && body.activity_id.trim() !== '') {
     const r = await callApi(`${API}/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: body.activity_id.trim() }) })
-    const created = await r.json()
+    const raw = await r.json()
+    const created = raw.data || raw
     body.activity_id = created.id
     activities.value.unshift(created)
   }
