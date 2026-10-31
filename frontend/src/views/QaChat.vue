@@ -55,7 +55,7 @@
           <div class="msg-row ai">
             <el-avatar class="avatar ai-avatar" :size="36">AI</el-avatar>
             <el-card class="answer-card" shadow="never">
-              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'命中知识库':'AI 生成' }}</el-tag><span v-if="message.faq_id" class="fid">faq_id={{ message.faq_id }}</span></div>
+              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'来自知识库':'AI 生成' }}</el-tag><el-button v-if="message.faq_id" link type="primary" size="small" @click="openFaq(message)">查看原 FAQ</el-button></div>
               <div class="ans-body">{{ message.answer }}</div>
               <div class="tools">
                 <el-tooltip content="复制" placement="top"><el-icon class="tool" @click="copyAnswer(message)"><CopyDocument /></el-icon></el-tooltip>
@@ -73,6 +73,12 @@
         <div class="composer-footer"><span class="hint">答案将优先来自 FAQ 知识库</span><el-button type="primary" round @click="ask" :loading="loading">发送问题 ↗</el-button></div>
       </section>
     </main>
+
+    <el-dialog v-model="faqDlg" title="知识库原 FAQ" width="560px">
+      <div class="faq-detail-q">{{ faqDetail.question }}</div>
+      <div class="faq-detail-a">{{ faqDetail.answer }}</div>
+      <template #footer><el-button @click="faqDlg=false">关闭</el-button></template>
+    </el-dialog>
 
     <el-dialog v-model="groupDlg" title="新建对话分组" width="480px">
       <el-form label-width="80px">
@@ -97,7 +103,7 @@
 import { reactive, ref, watch, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, FolderOpened, ArrowDown, Clock, Close, CopyDocument, Refresh } from '@element-plus/icons-vue'
-const API = 'http://localhost:8000'
+const API = import.meta.env.VITE_API_BASE_URL || '/api'
 const qa = reactive({ question: '', activity_id: '' })
 const activities = ref([]); const messages = ref([]); const loading = ref(false); const conversationRef = ref(null)
 const history = ref([]); const currentId = ref(1); const showGroups = ref(false); const conversationName = ref('新对话')
@@ -105,6 +111,15 @@ const history = ref([]); const currentId = ref(1); const showGroups = ref(false)
 const groups = ref([]); const filterGroupId = ref(null)
 const groupDlg = ref(false)
 const groupForm = reactive({ name: '', ids: [] })
+const faqDlg = ref(false)
+const faqDetail = reactive({ question: '', answer: '' })
+const openFaq = (message) => {
+  Object.assign(faqDetail, {
+    question: message.faq_question || message.question,
+    answer: message.answer,
+  })
+  faqDlg.value = true
+}
 const openGroupDlg = () => { groupForm.name = ''; groupForm.ids = []; groupDlg.value = true }
 const saveGroup = () => {
   if (!groupForm.name.trim()) return ElMessage.warning('请输入分组名称')
@@ -152,18 +167,29 @@ const restore = () => {
 
 onMounted(async () => {
   restore()
-  try { const d = await (await fetch(`${API}/api/activities`)).json(); activities.value = d.items || [] } catch { activities.value = [] }
+  try {
+    const d = await (await fetch(`${API}/activities`)).json()
+    activities.value = d.data?.items || d.items || []
+  } catch { activities.value = [] }
 })
 const newChat = () => { currentId.value = Date.now(); messages.value = []; qa.question = ''; qa.activity_id = ''; conversationName.value = '新对话'; history.value.unshift({ id: currentId.value, title: '新对话', messages: [] }) }
 const selectHistory = (item) => { currentId.value = item.id; messages.value = item.messages || []; conversationName.value = item.title; qa.activity_id = item.activity_id ?? '' }
+const MAX_CONTEXT_MESSAGES = 4
+const buildHistory = (list = messages.value) => list.slice(-MAX_CONTEXT_MESSAGES).flatMap((m) => {
+  const turns = []
+  if (m.question) turns.push({ role: 'user', content: m.question })
+  if (m.answer) turns.push({ role: 'assistant', content: m.answer })
+  return turns
+})
 const ask = async () => {
   if (!qa.question.trim()) return ElMessage.warning('先输入问题')
   const question = qa.question.trim(); loading.value = true
+  const contextHistory = buildHistory()
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 90000)
   try {
-    const answer = await fetchAsk(question, false, ctrl.signal)
-    messages.value.push({ question, ...answer, feedback: null })
+    const answer = await fetchAsk(question, false, ctrl.signal, contextHistory)
+    messages.value.push({ question, ...answer, feedback: null, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id) })
     let current = history.value.find(item => item.id === currentId.value)
     if (!current) { current = { id: currentId.value, title: conversationName.value, messages: messages.value }; history.value.unshift(current) }
     current.messages = messages.value; current.activity_id = qa.activity_id
@@ -171,29 +197,50 @@ const ask = async () => {
     qa.question = ''; await nextTick(); scrollToEnd()
   } catch (e) {
     if (e?.name === 'AbortError') {
-      messages.value.push({ question, answer: 'AI 繁忙，已记录你的问题，稍后重试或联系活动负责人。', source: 'llm', faq_id: null, feedback: null, timeout: true })
+      messages.value.push({ question, answer: 'AI 繁忙，已记录你的问题，稍后重试或联系活动负责人。', source: 'llm', faq_id: null, feedback: null, timeout: true, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id) })
       ElMessage.warning('AI 繁忙，已记录问题，请稍后重试')
     } else { throw e }
   } finally { clearTimeout(timer); loading.value = false }
 }
-const fetchAsk = async (question, noCache, signal) => (await fetch(`${API}/api/qa/ask`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id), no_cache: noCache }), signal })).json()
+const fetchAsk = async (question, noCache, signal, contextHistory = [], activityId = qa.activity_id) => {
+  const activity_id = activityId === '' || activityId === null || activityId === undefined ? null : Number(activityId)
+  return (await fetch(`${API}/qa/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, activity_id, no_cache: noCache, history: contextHistory }),
+    signal,
+  })).json()
+}
 const scrollToEnd = () => conversationRef.value?.scrollTo({ top: conversationRef.value.scrollHeight, behavior: 'smooth' })
 const copyAnswer = async (message) => {
   try { await navigator.clipboard.writeText(message.answer); ElMessage.success('已复制') } catch { ElMessage.warning('复制失败，请手动选择') }
 }
 const like = async (message) => {
   message.feedback = message.feedback === 'like' ? null : 'like'
-  if (message.feedback === 'like') { await fetch(`${API}/api/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'like', faq_id: message.faq_id, question: message.question }) }); ElMessage.success('感谢反馈') }
+  if (message.feedback === 'like') {
+    await fetch(`${API}/qa/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'like', faq_id: message.faq_id, log_id: message.log_id, activity_id: message.activity_id ?? null, question: message.question }),
+    })
+    ElMessage.success('感谢反馈')
+  }
 }
 const dislike = async (message) => {
   message.feedback = 'dislike'
-  const r = await fetch(`${API}/api/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'dislike', faq_id: message.faq_id, question: message.question }) })
+  const r = await fetch(`${API}/qa/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'dislike', faq_id: message.faq_id, log_id: message.log_id, activity_id: message.activity_id ?? null, question: message.question }),
+  })
   const d = await r.json()
-  ElMessage.warning(d.faq_downgraded ? '已反馈，该条知识库答案已转为待审核' : '已反馈，我们会尽快优化')
+  ElMessage.warning(d.faq_downgraded ? '已反馈，该条知识库答案已转为待审核' : '已反馈，已进入待优化列表')
 }
 const regenerate = async (message) => {
   ElMessage.info('重新生成中…')
-  const answer = await fetchAsk(message.question, true)
+  const idx = messages.value.indexOf(message)
+  const contextHistory = buildHistory(messages.value.slice(0, idx < 0 ? messages.value.length : idx))
+  const answer = await fetchAsk(message.question, true, undefined, contextHistory, message.activity_id ?? qa.activity_id)
   Object.assign(message, answer, { feedback: null })
   await nextTick(); scrollToEnd()
 }
@@ -226,7 +273,7 @@ const regenerate = async (message) => {
 .avatar{flex:none;font-size:13px;font-weight:600}
 .user-avatar{background:#3a5bff;color:#fff}
 .ai-avatar{background:#e8efff;color:#3a5bff}
-.answer-card{flex:1;border:1px solid #e1e8f5;border-radius:14px;background:#fff;border-top-left-radius:4px}.ans-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}.answer-label{font-weight:700;color:#33415c}.fid{font-size:12px;color:#9aa4b5}.ans-body{white-space:pre-wrap;line-height:1.8;color:#4a5568;margin-bottom:10px}
+.answer-card{flex:1;border:1px solid #e1e8f5;border-radius:14px;background:#fff;border-top-left-radius:4px}.ans-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}.answer-label{font-weight:700;color:#33415c}.fid{font-size:12px;color:#9aa4b5}.faq-detail-q{font-weight:700;color:#26334d;margin-bottom:10px}.faq-detail-a{white-space:pre-wrap;line-height:1.8;color:#4a5568}.ans-body{white-space:pre-wrap;line-height:1.8;color:#4a5568;margin-bottom:10px}
 .tools{display:flex;align-items:center;gap:16px;padding-top:4px}
 .tool{font-size:16px;color:#9aa4b5;cursor:pointer;transition:color .15s}
 .tool:hover{color:#3a5bff}

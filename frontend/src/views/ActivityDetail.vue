@@ -68,7 +68,8 @@ import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 
 // AI 推文走 vite 代理(127.0.0.1:8000),避免 Windows localhost 解析问题(PM 合并仪式整合)
-const API = import.meta.env.VITE_API_BASE_URL || ''
+const API = import.meta.env.VITE_API_BASE_URL || '/api'
+const ASSET_BASE = API.replace(/\/api\/?$/, '')
 
 const route = useRoute()
 const act = ref({})
@@ -121,7 +122,7 @@ const genLoading = ref(false)
 const generate = async () => {
   genLoading.value = true
   try {
-    const d = await (await fetch(`${API}/api/activities/${route.params.id}/generate-article`, {
+    const d = await (await fetch(`${API}/activities/${route.params.id}/generate-article`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ style: genStyle.value }),
     })).json()
@@ -135,7 +136,7 @@ const polish = async () => {
   if (!genContent.value) return ElMessage.warning('先点「生成」再润色')
   genLoading.value = true
   try {
-    const d = await (await fetch(`${API}/api/activities/${route.params.id}/polish-article`, {
+    const d = await (await fetch(`${API}/activities/${route.params.id}/polish-article`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: genContent.value, style: genStyle.value }),
     })).json()
@@ -149,9 +150,9 @@ const onUploadImg = async (files, callback) => {
   const urls = await Promise.all(files.map(async (file) => {
     const fd = new FormData()
     fd.append('file', file)
-    const r = await fetch(`${API}/api/upload`, { method: 'POST', body: fd })
+    const r = await fetch(`${API}/upload`, { method: 'POST', body: fd })
     const d = await r.json()
-    return `${API}${d.data?.url || ''}`
+    return `${ASSET_BASE}${d.data?.url || ''}`
   }))
   callback(urls)
 }
@@ -166,7 +167,7 @@ const saveArticle = async () => {
   if (!genContent.value) return ElMessage.warning('先点「生成」再保存')
   saveLoading.value = true
   try {
-    const r = await fetch(`${API}/api/activities/${route.params.id}`, {
+    const r = await fetch(`${API}/activities/${route.params.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...act.value, article: genContent.value }),

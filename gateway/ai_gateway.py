@@ -96,13 +96,20 @@ def generate_image(prompt: str) -> str:
     raise RuntimeError("生图超时")
 
 
-def _chat_completion(prompt: str, system: str = "") -> str:
+def _chat_completion(prompt: str, system: str = "", history: list | None = None) -> str:
     """真实调用百炼（OpenAI 兼容 /chat/completions），失败抛异常由上层降级。"""
     if not API_KEY:
         raise RuntimeError("未配置 DASHSCOPE_API_KEY")
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
+    for turn in history or []:
+        if not isinstance(turn, dict):
+            continue
+        role = str(turn.get("role", "")).strip()
+        content = str(turn.get("content", "")).strip()
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
     resp = requests.post(
         f"{BASE_URL}/chat/completions",
@@ -211,16 +218,18 @@ def similar_question(question: str, candidates: list) -> int:
 
 # ---------- 能力 1：智能答疑（对话） ----------
 
-def chat(question: str, system: str = None, activity_id: int = None) -> dict:
+def chat(question: str, system: str = None, activity_id: int = None, history: list = None, activity_context: str = None) -> dict:
     """输入问题，返回 {"answer": str, "source": "llm"|"mock"}。"""
-    if activity_id:
+    if activity_id and not activity_context:
         question = f"【当前活动ID：{activity_id}】关于该活动的问题：{question}"
-        
+
     sys_prompt = system or SYSTEM_QA
-    
+    if activity_context:
+        sys_prompt = f"{sys_prompt}\n\n当前活动信息（优先据此回答，不要编造）：\n{activity_context}"
+
     if USE_REAL_LLM:
         try:
-            return {"answer": _chat_completion(question, system=sys_prompt), "source": "llm"}
+            return {"answer": _chat_completion(question, system=sys_prompt, history=history), "source": "llm"}
         except Exception as e:
             print(f"\n❌ 真实 API 调用失败，错误原因: {repr(e)}\n")
             return {"answer": f"[真实网关失败，已降级Mock] {e}", "source": "mock"}
