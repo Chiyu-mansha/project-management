@@ -48,6 +48,14 @@ def _overlap(a: str, b: str) -> float:
     return len(sa & sb) / max(len(sa), len(sb))
 
 
+_MOCK_ANSWER_PREFIXES = ("[网关不可用", "[真实网关失败", "[Mock")
+
+
+def _is_degraded_answer(answer: str) -> bool:
+    """判断答案是否来自网关降级/本地 Mock，避免把兜底话术当成真实答案缓存。"""
+    return (answer or "").lstrip().startswith(_MOCK_ANSWER_PREFIXES)
+
+
 @router.post("/ask")
 def ask(body: AskIn):
     q = (body.question or "").strip()
@@ -102,7 +110,7 @@ def ask(body: AskIn):
         ).fetchall()
         cached = None
         for lq, la in logs:
-            if _norm(lq) == nq and la:
+            if _norm(lq) == nq and la and not _is_degraded_answer(la):
                 cached = la
                 break
         if cached:
@@ -112,9 +120,12 @@ def ask(body: AskIn):
     # 3. 无缓存 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
     result = chat(q, body.activity_id)
     answer = result["answer"]
-    _log(conn, body.activity_id, q, answer, "llm")
+    source = result.get("source", "llm")
+    # 关键：降级 Mock 不写 source='llm'，因此不会被上面的 7 天缓存命中；
+    # 仍保留一条 source='mock' 日志用于统计网关失败率，但不参与候选沉淀。
+    _log(conn, body.activity_id, q, answer, source if source in ("llm", "mock") else "llm")
     conn.commit(); conn.close()
-    return {"answer": answer, "source": "llm", "faq_id": None, "cached": False}
+    return {"answer": answer, "source": source, "faq_id": None, "cached": False}
 
 
 def _log(conn, activity_id, question, answer, source):
@@ -133,6 +144,8 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
     groups = {}
     for r in logs:
         if r["source"] != "llm":  # 只统计没被 FAQ 命中的
+            continue
+        if _is_degraded_answer(r["answer"]):
             continue
         if activity_id is not None and r["activity_id"] != activity_id:
             continue
