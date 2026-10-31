@@ -31,6 +31,8 @@ class AcceptIn(BaseModel):
 
 class FeedbackIn(BaseModel):
     faq_id: Optional[int] = None
+    log_id: Optional[int] = None
+    activity_id: Optional[int] = None
     action: str  # like / dislike
     question: Optional[str] = ""
 
@@ -152,9 +154,9 @@ def ask(body: AskIn):
                     row = next((r for r in rows if dict_row(r)["id"] == scored[0]["id"]), None)
     if row:
         d = dict_row(row)
-        _log(conn, body.activity_id, q, d["answer"], "faq")
+        log_id = _log(conn, body.activity_id, q, d["answer"], "faq")
         conn.commit(); conn.close()
-        return {"answer": d["answer"], "source": "faq", "faq_id": d["id"]}
+        return {"answer": d["answer"], "source": "faq", "faq_id": d["id"], "faq_question": d.get("question", ""), "log_id": log_id}
     # 2. 未命中 → 先看 7 天内同样归一化问题有没有 llm 缓存，有直接复用，不调网关
     #    多轮追问不读缓存：同一句话在不同上下文下答案可能不同。
     nq = _norm(q)
@@ -172,9 +174,9 @@ def ask(body: AskIn):
                 cached = la
                 break
         if cached:
-            _log(conn, body.activity_id, q, cached, "llm")
+            log_id = _log(conn, body.activity_id, q, cached, "llm")
             conn.commit(); conn.close()
-            return {"answer": cached, "source": "llm", "faq_id": None, "cached": True}
+            return {"answer": cached, "source": "llm", "faq_id": None, "cached": True, "log_id": log_id}
     # 3. 无缓存 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
     result = chat(q, body.activity_id, history=history, activity_context=activity_context or None)
     answer = result["answer"]
@@ -188,16 +190,17 @@ def ask(body: AskIn):
         log_source = "llm_ctx"
     else:
         log_source = "llm"
-    _log(conn, body.activity_id, q, answer, log_source)
+    log_id = _log(conn, body.activity_id, q, answer, log_source)
     conn.commit(); conn.close()
-    return {"answer": answer, "source": source, "faq_id": None, "cached": False}
+    return {"answer": answer, "source": source, "faq_id": None, "cached": False, "log_id": log_id}
 
 
 def _log(conn, activity_id, question, answer, source):
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO qa_logs(activity_id,question,answer,source,count,created_at) VALUES(?,?,?,?,1,?)",
         (activity_id, question, answer, source, datetime.now().isoformat(timespec="seconds")),
     )
+    return cur.lastrowid
 
 
 @router.get("/candidates")
@@ -264,14 +267,66 @@ def candidates(min_count: int = 3, activity_id: Optional[int] = None):
 
 @router.post("/feedback")
 def feedback(body: FeedbackIn):
-    """赞/踩。踩且命中知识库 → 该 FAQ 立即转为待审核(draft)。"""
+    """赞/踩。写入 qa_logs.feedback；踩且命中知识库 → 该 FAQ 立即转为待审核(draft)。"""
+    if body.action not in ("like", "dislike"):
+        return {"ok": False, "message": "action 只能是 like/dislike"}
     conn = get_conn()
-    changed = False
+    now = _now()
+    faq_downgraded = False
+    feedback_updated = False
+    # 优先按 log_id 精确更新，避免同一问题多次提问时改错记录
+    if body.log_id:
+        cur = conn.execute(
+            "UPDATE qa_logs SET feedback=?, feedback_at=? WHERE id=?",
+            (body.action, now, body.log_id),
+        )
+        feedback_updated = cur.rowcount > 0
+    elif body.question:
+        if body.activity_id is None:
+            cur = conn.execute(
+                """UPDATE qa_logs SET feedback=?, feedback_at=?
+                   WHERE id=(SELECT id FROM qa_logs WHERE question=? AND activity_id IS NULL ORDER BY id DESC LIMIT 1)""",
+                (body.action, now, body.question),
+            )
+        else:
+            cur = conn.execute(
+                """UPDATE qa_logs SET feedback=?, feedback_at=?
+                   WHERE id=(SELECT id FROM qa_logs WHERE question=? AND activity_id=? ORDER BY id DESC LIMIT 1)""",
+                (body.action, now, body.question, body.activity_id),
+            )
+        feedback_updated = cur.rowcount > 0
     if body.action == "dislike" and body.faq_id:
-        conn.execute("UPDATE faqs SET status='draft',updated_at=? WHERE id=?", (_now(), body.faq_id,))
-        conn.commit(); changed = True
+        conn.execute("UPDATE faqs SET status='draft',updated_at=? WHERE id=?", (now, body.faq_id))
+        faq_downgraded = True
+    conn.commit(); conn.close()
+    return {"ok": True, "faq_downgraded": faq_downgraded, "feedback_updated": feedback_updated}
+
+
+@router.get("/disliked")
+def disliked(limit: int = 50, user: dict = Depends(require_role("ORGANIZER"))):
+    """被踩的答疑记录 → 待改写/待沉淀列表（按问题归一化后聚合）。"""
+    limit = min(max(limit, 1), 200)
+    conn = get_conn()
+    rows = conn.execute(
+        """SELECT q.id, q.activity_id, q.question, q.answer, q.source, q.feedback, q.feedback_at, q.created_at,
+                  (SELECT title FROM activities WHERE activities.id=q.activity_id) AS activity_title
+           FROM qa_logs q
+           WHERE q.feedback='dislike'
+           ORDER BY q.id DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    groups = {}
+    for r in rows:
+        d = dict_row(r)
+        key = (d.get("activity_id"), _norm(d.get("question", "")))
+        g = groups.get(key)
+        if g is None:
+            g = {**d, "count": 0, "log_id": d["id"], "last_feedback_at": d.get("feedback_at")}
+            groups[key] = g
+        g["count"] += 1
+    items = sorted(groups.values(), key=lambda x: (-x["count"], -x["log_id"]))
     conn.close()
-    return {"ok": True, "faq_downgraded": changed}
+    return {"items": items, "total": len(items)}
 
 
 @router.post("/candidates/accept")

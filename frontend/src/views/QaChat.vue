@@ -55,7 +55,7 @@
           <div class="msg-row ai">
             <el-avatar class="avatar ai-avatar" :size="36">AI</el-avatar>
             <el-card class="answer-card" shadow="never">
-              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'命中知识库':'AI 生成' }}</el-tag><span v-if="message.faq_id" class="fid">faq_id={{ message.faq_id }}</span></div>
+              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'来自知识库':'AI 生成' }}</el-tag><el-button v-if="message.faq_id" link type="primary" size="small" @click="openFaq(message)">查看原 FAQ</el-button></div>
               <div class="ans-body">{{ message.answer }}</div>
               <div class="tools">
                 <el-tooltip content="复制" placement="top"><el-icon class="tool" @click="copyAnswer(message)"><CopyDocument /></el-icon></el-tooltip>
@@ -73,6 +73,12 @@
         <div class="composer-footer"><span class="hint">答案将优先来自 FAQ 知识库</span><el-button type="primary" round @click="ask" :loading="loading">发送问题 ↗</el-button></div>
       </section>
     </main>
+
+    <el-dialog v-model="faqDlg" title="知识库原 FAQ" width="560px">
+      <div class="faq-detail-q">{{ faqDetail.question }}</div>
+      <div class="faq-detail-a">{{ faqDetail.answer }}</div>
+      <template #footer><el-button @click="faqDlg=false">关闭</el-button></template>
+    </el-dialog>
 
     <el-dialog v-model="groupDlg" title="新建对话分组" width="480px">
       <el-form label-width="80px">
@@ -105,6 +111,15 @@ const history = ref([]); const currentId = ref(1); const showGroups = ref(false)
 const groups = ref([]); const filterGroupId = ref(null)
 const groupDlg = ref(false)
 const groupForm = reactive({ name: '', ids: [] })
+const faqDlg = ref(false)
+const faqDetail = reactive({ question: '', answer: '' })
+const openFaq = (message) => {
+  Object.assign(faqDetail, {
+    question: message.faq_question || message.question,
+    answer: message.answer,
+  })
+  faqDlg.value = true
+}
 const openGroupDlg = () => { groupForm.name = ''; groupForm.ids = []; groupDlg.value = true }
 const saveGroup = () => {
   if (!groupForm.name.trim()) return ElMessage.warning('请输入分组名称')
@@ -202,13 +217,24 @@ const copyAnswer = async (message) => {
 }
 const like = async (message) => {
   message.feedback = message.feedback === 'like' ? null : 'like'
-  if (message.feedback === 'like') { await fetch(`${API}/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'like', faq_id: message.faq_id, question: message.question }) }); ElMessage.success('感谢反馈') }
+  if (message.feedback === 'like') {
+    await fetch(`${API}/qa/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'like', faq_id: message.faq_id, log_id: message.log_id, activity_id: message.activity_id ?? null, question: message.question }),
+    })
+    ElMessage.success('感谢反馈')
+  }
 }
 const dislike = async (message) => {
   message.feedback = 'dislike'
-  const r = await fetch(`${API}/qa/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'dislike', faq_id: message.faq_id, question: message.question }) })
+  const r = await fetch(`${API}/qa/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'dislike', faq_id: message.faq_id, log_id: message.log_id, activity_id: message.activity_id ?? null, question: message.question }),
+  })
   const d = await r.json()
-  ElMessage.warning(d.faq_downgraded ? '已反馈，该条知识库答案已转为待审核' : '已反馈，我们会尽快优化')
+  ElMessage.warning(d.faq_downgraded ? '已反馈，该条知识库答案已转为待审核' : '已反馈，已进入待优化列表')
 }
 const regenerate = async (message) => {
   ElMessage.info('重新生成中…')
@@ -247,7 +273,7 @@ const regenerate = async (message) => {
 .avatar{flex:none;font-size:13px;font-weight:600}
 .user-avatar{background:#3a5bff;color:#fff}
 .ai-avatar{background:#e8efff;color:#3a5bff}
-.answer-card{flex:1;border:1px solid #e1e8f5;border-radius:14px;background:#fff;border-top-left-radius:4px}.ans-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}.answer-label{font-weight:700;color:#33415c}.fid{font-size:12px;color:#9aa4b5}.ans-body{white-space:pre-wrap;line-height:1.8;color:#4a5568;margin-bottom:10px}
+.answer-card{flex:1;border:1px solid #e1e8f5;border-radius:14px;background:#fff;border-top-left-radius:4px}.ans-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}.answer-label{font-weight:700;color:#33415c}.fid{font-size:12px;color:#9aa4b5}.faq-detail-q{font-weight:700;color:#26334d;margin-bottom:10px}.faq-detail-a{white-space:pre-wrap;line-height:1.8;color:#4a5568}.ans-body{white-space:pre-wrap;line-height:1.8;color:#4a5568;margin-bottom:10px}
 .tools{display:flex;align-items:center;gap:16px;padding-top:4px}
 .tool{font-size:16px;color:#9aa4b5;cursor:pointer;transition:color .15s}
 .tool:hover{color:#3a5bff}

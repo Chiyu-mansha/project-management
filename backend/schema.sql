@@ -152,6 +152,8 @@ CREATE TABLE qa_logs (
     answer TEXT,
     source TEXT,
     count INTEGER DEFAULT 1,                -- 同问题出现次数(高频沉淀统计用)
+    feedback TEXT,                          -- like / dislike，用户对答案的反馈
+    feedback_at TEXT,                       -- 反馈时间
     created_at TEXT
 );
 

@@ -17,6 +17,7 @@
       <el-button type="warning" @click="genDlg = true">✨ 推文AI提取</el-button>
       <el-button type="info" plain @click="impDlg = true">📥 活动一键导入</el-button>
       <el-button type="primary" plain @click="openCandidates">🔥 高频待沉淀</el-button>
+      <el-button type="danger" plain @click="openDisliked">👎 被踩待优化</el-button>
       <span class="total">共 {{ total }} 条</span>
     </div>
 
@@ -101,6 +102,24 @@
         <el-table-column prop="answer" label="AI 原答案" min-width="220" show-overflow-tooltip />
         <el-table-column label="操作" width="90">
           <template #default="s"><el-button size="small" type="success" link @click="acceptCandidate(s.row)">沉淀</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="dislikedDlg" title="👎 被踩待优化" width="760px">
+      <p style="color:#888;margin-top:0">这些答案被用户点踩，建议改写后沉淀为 FAQ，或优化知识库/提示词。</p>
+      <div style="margin-bottom:10px">
+        <el-button size="small" :loading="dislikedLoading" @click="loadDisliked">刷新</el-button>
+      </div>
+      <el-table :data="disliked" border size="small" v-loading="dislikedLoading" empty-text="暂无被踩记录">
+        <el-table-column prop="activity_title" label="活动" width="150" show-overflow-tooltip />
+        <el-table-column prop="question" label="问题" min-width="200" />
+        <el-table-column prop="count" label="被踩次数" width="90">
+          <template #default="s"><el-tag type="danger" size="small">{{ s.row.count }} 次</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="answer" label="原答案" min-width="240" show-overflow-tooltip />
+        <el-table-column label="操作" width="100">
+          <template #default="s"><el-button size="small" type="success" link @click="acceptDisliked(s.row)">沉淀为 FAQ</el-button></template>
         </el-table-column>
       </el-table>
     </el-dialog>
@@ -209,6 +228,20 @@ const loadCandidates = async () => {
 const acceptCandidate = async (r) => {
   await callApi(`${API}/qa/candidates/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: r.question, answer: r.answer, activity_id: r.activity_id }) })
   ElMessage.success('已沉淀为待审核 FAQ'); candidates.value = candidates.value.filter(x => x.question !== r.question)
+}
+const dislikedDlg = ref(false); const disliked = ref([]); const dislikedLoading = ref(false)
+const openDisliked = () => { dislikedDlg.value = true; loadDisliked() }
+const loadDisliked = async () => {
+  dislikedLoading.value = true
+  try {
+    const d = await (await callApi(`${API}/qa/disliked?limit=100`)).json()
+    disliked.value = d.data?.items || d.items || []
+  } finally { dislikedLoading.value = false }
+}
+const acceptDisliked = async (r) => {
+  await callApi(`${API}/qa/candidates/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: r.question, answer: r.answer, activity_id: r.activity_id }) })
+  ElMessage.success('已沉淀为待审核 FAQ')
+  disliked.value = disliked.value.filter(x => x.question !== r.question)
 }
 const save = async () => {
   const body = { ...form }; const id = body.id; delete body.id

@@ -39,12 +39,18 @@ def init_db():
             answer      TEXT,
             source      TEXT,
             count       INTEGER DEFAULT 1,
+            feedback    TEXT,
+            feedback_at TEXT,
             created_at  TEXT
         )"""
     )
     qa_cols = [r[1] for r in conn.execute("PRAGMA table_info(qa_logs)").fetchall()]
     if "count" not in qa_cols:
         conn.execute("ALTER TABLE qa_logs ADD COLUMN count INTEGER DEFAULT 1")
+    if "feedback" not in qa_cols:
+        conn.execute("ALTER TABLE qa_logs ADD COLUMN feedback TEXT")
+    if "feedback_at" not in qa_cols:
+        conn.execute("ALTER TABLE qa_logs ADD COLUMN feedback_at TEXT")
     # 活动表迁移：老库是 v1.0 结构(organizer/type/status 等)，新 schema v1.3
     # 新增 organizer_id 等字段；缺列则补列，保证旧 app.db 也能跑
     try:
