@@ -144,18 +144,3 @@ def recommend(req: RecommendReq):
 def score(req: ScoreReq):
     """POD-2 推荐页调用：对单个活动打分。返回纯数据，不包 code/data"""
     return ai_gateway.score_activity(req.profile, req.activity)
-
-
-# ---------- 扩展：AI 生图（通义万相） ----------
-class ImageReq(BaseModel):
-    prompt: str
-
-
-@app.post("/api/ai/generate-image")
-def generate_image(req: ImageReq):
-    """文生图：调通义万相，返回图片 URL。失败返回 error 字段，不抛异常。"""
-    try:
-        url = ai_gateway.generate_image(req.prompt)
-        return {"url": url}
-    except Exception as e:
-        return {"url": "", "error": str(e)}
