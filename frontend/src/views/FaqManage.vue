@@ -17,6 +17,7 @@
       <el-button type="warning" @click="genDlg = true">✨ 推文AI提取</el-button>
       <el-button type="info" plain @click="impDlg = true">📥 活动一键导入</el-button>
       <el-button type="primary" plain @click="openCandidates">🔥 高频待沉淀</el-button>
+      <el-button type="danger" plain @click="openDisliked">👎 被踩待优化</el-button>
       <span class="total">共 {{ total }} 条</span>
     </div>
 
@@ -104,6 +105,24 @@
         </el-table-column>
       </el-table>
     </el-dialog>
+
+    <el-dialog v-model="dislikedDlg" title="👎 被踩待优化" width="1000px" top="6vh">
+      <p style="color:#888;margin-top:0">这些答案被用户点踩，建议改写后沉淀为 FAQ，或优化知识库/提示词。</p>
+      <div style="margin-bottom:10px">
+        <el-button size="small" :loading="dislikedLoading" @click="loadDisliked">刷新</el-button>
+      </div>
+      <el-table :data="disliked" border size="default" max-height="60vh" v-loading="dislikedLoading" empty-text="暂无被踩记录">
+        <el-table-column prop="activity_title" label="活动" width="150" show-overflow-tooltip />
+        <el-table-column prop="question" label="问题" min-width="200" />
+        <el-table-column prop="count" label="被踩次数" width="90">
+          <template #default="s"><el-tag type="danger" size="small">{{ s.row.count }} 次</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="answer" label="原答案" min-width="240" show-overflow-tooltip />
+        <el-table-column label="操作" width="100">
+          <template #default="s"><el-button size="small" type="success" link @click="acceptDisliked(s.row)">沉淀为 FAQ</el-button></template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 
@@ -111,7 +130,10 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-const API = 'http://localhost:8000'
+import { session } from '../auth/session.js'
+const API = import.meta.env.VITE_API_BASE_URL || '/api'
+const authHeaders = () => session.value?.token ? { Authorization: `Bearer ${session.value.token}` } : {}
+const callApi = (path, options = {}) => fetch(path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } })
 const CATS = ['竞赛类', '讲座/分享类', '培训/工作坊类', '招募类', '文体活动类', '通知类']
 const CAT_COLORS = { '竞赛类': '#6366f1', '讲座/分享类': '#0ea5e9', '培训/工作坊类': '#8b5cf6', '招募类': '#f59e0b', '文体活动类': '#22c55e', '通知类': '#64748b' }
 const catColor = (c) => CAT_COLORS[c] || '#909399'
@@ -136,7 +158,7 @@ const buildGroups = (list) => {
 }
 const groupClass = ({ row }) => (groupMap[row.id] % 2 === 0 ? 'grp-a' : 'grp-b')
 
-const loadActivities = async () => { try { const d = await (await fetch(`${API}/api/activities`)).json(); activities.value = d.items || [] } catch { activities.value = [] } }
+const loadActivities = async () => { try { const d = await (await callApi(`${API}/activities`)).json(); activities.value = d.data?.items || d.items || [] } catch { activities.value = [] } }
 const load = async () => {
   loading.value = true
   try {
@@ -145,7 +167,7 @@ const load = async () => {
     if (query.category) p.append('category', query.category)
     if (query.status) p.append('status', query.status)
     if (query.activity_id !== '' && query.activity_id !== null) p.append('activity_id', query.activity_id)
-    const d = await (await fetch(`${API}/api/faqs?${p}`)).json()
+    const d = await (await callApi(`${API}/faqs?${p}`)).json()
     const list = (d.items || []).sort((a, b) => (a.activity_id ?? -1) - (b.activity_id ?? -1) || String(a.category).localeCompare(String(b.category)))
     buildGroups(list)
     rows.value = list; total.value = d.total
@@ -163,20 +185,21 @@ const autoGen = async () => {
   try {
     // 直接输入了新活动名称（字符串）→ 先建活动再拿 id
     if (typeof genForm.activity_id === 'string' && genForm.activity_id.trim() !== '') {
-      const r = await fetch(`${API}/api/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: genForm.activity_id.trim() }) })
-      const created = await r.json()
+      const r = await callApi(`${API}/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: genForm.activity_id.trim() }) })
+      const raw = await r.json()
+      const created = raw.data || raw
       genForm.activity_id = created.id
       if (!activities.value.some(a => a.id === created.id)) activities.value.unshift(created)
     }
     if (genForm.activity_id === '') genForm.activity_id = null
-    const d = await (await fetch(`${API}/api/faqs/auto-generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(genForm) })).json()
+    const d = await (await callApi(`${API}/faqs/auto-generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(genForm) })).json()
     if (d.total === 0) ElMessage.warning(`没有新增（跳过重复 ${d.skipped || 0} 条）`)
     else ElMessage.success(`AI提取${d.total}条${d.skipped ? `，跳过重复${d.skipped}条` : ''}，已存为待审核`)
     genDlg.value = false; query.status = 'draft'; load()
   } finally { genLoading.value = false }
 }
 const approve = async (r) => {
-  await fetch(`${API}/api/faqs/${r.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...r, status: 'published' }) })
+  await callApi(`${API}/faqs/${r.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...r, status: 'published' }) })
   ElMessage.success('已发布'); load()
 }
 const impDlg = ref(false); const impLoading = ref(false); const impStatus = ref(null)
@@ -184,13 +207,13 @@ const impForm = reactive({ activity_id: null, category: '通知类' })
 const checkImported = async () => {
   impStatus.value = null
   if (!impForm.activity_id) return
-  try { impStatus.value = await (await fetch(`${API}/api/faqs/import-status?activity_id=${impForm.activity_id}`)).json() } catch {}
+  try { impStatus.value = await (await callApi(`${API}/faqs/import-status?activity_id=${impForm.activity_id}`)).json() } catch {}
 }
 const importFromActivity = async () => {
   if (!impForm.activity_id) return ElMessage.warning('先选择活动')
   impLoading.value = true
   try {
-    const d = await (await fetch(`${API}/api/faqs/from-activity`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(impForm) })).json()
+    const d = await (await callApi(`${API}/faqs/from-activity`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(impForm) })).json()
     if (d.total === 0) ElMessage.warning(`没有新增（跳过重复 ${d.skipped || 0} 条），该活动已导入过`)
     else ElMessage.success(`导入${d.total}条${d.skipped ? `，跳过重复${d.skipped}条` : ''}，已存为待审核`)
     impDlg.value = false; query.status = 'draft'; load()
@@ -200,28 +223,43 @@ const candDlg = ref(false); const candidates = ref([]); const candLoading = ref(
 const openCandidates = () => { candDlg.value = true; loadCandidates() }
 const loadCandidates = async () => {
   candLoading.value = true
-  try { const d = await (await fetch(`${API}/api/qa/candidates?min_count=${candMin.value}`)).json(); candidates.value = d.items || [] } finally { candLoading.value = false }
+  try { const d = await (await callApi(`${API}/qa/candidates?min_count=${candMin.value}`)).json(); candidates.value = d.items || [] } finally { candLoading.value = false }
 }
 const acceptCandidate = async (r) => {
-  await fetch(`${API}/api/qa/candidates/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: r.question, answer: r.answer, activity_id: r.activity_id }) })
+  await callApi(`${API}/qa/candidates/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: r.question, answer: r.answer, activity_id: r.activity_id }) })
   ElMessage.success('已沉淀为待审核 FAQ'); candidates.value = candidates.value.filter(x => x.question !== r.question)
+}
+const dislikedDlg = ref(false); const disliked = ref([]); const dislikedLoading = ref(false)
+const openDisliked = () => { dislikedDlg.value = true; loadDisliked() }
+const loadDisliked = async () => {
+  dislikedLoading.value = true
+  try {
+    const d = await (await callApi(`${API}/qa/disliked?limit=100`)).json()
+    disliked.value = d.data?.items || d.items || []
+  } finally { dislikedLoading.value = false }
+}
+const acceptDisliked = async (r) => {
+  await callApi(`${API}/qa/candidates/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: r.question, answer: r.answer, activity_id: r.activity_id }) })
+  ElMessage.success('已沉淀为待审核 FAQ')
+  disliked.value = disliked.value.filter(x => x.question !== r.question)
 }
 const save = async () => {
   const body = { ...form }; const id = body.id; delete body.id
   if (!body.question.trim() || !body.answer.trim()) return ElMessage.error('问题和答案不能为空')
   // 直接输入了新活动名称（字符串）→ 先建活动再拿 id
   if (typeof body.activity_id === 'string' && body.activity_id.trim() !== '') {
-    const r = await fetch(`${API}/api/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: body.activity_id.trim() }) })
-    const created = await r.json()
+    const r = await callApi(`${API}/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: body.activity_id.trim() }) })
+    const raw = await r.json()
+    const created = raw.data || raw
     body.activity_id = created.id
     activities.value.unshift(created)
   }
   if (body.activity_id === '') body.activity_id = null
-  const r = await fetch(id ? `${API}/api/faqs/${id}` : `${API}/api/faqs`, { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const r = await callApi(id ? `${API}/faqs/${id}` : `${API}/faqs`, { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!r.ok) return ElMessage.error('保存失败')
   ElMessage.success('保存成功'); dlg.value = false; load()
 }
-const removeRow = async (r) => { await fetch(`${API}/api/faqs/${r.id}`, { method: 'DELETE' }); ElMessage.success('已删除'); load() }
+const removeRow = async (r) => { await callApi(`${API}/faqs/${r.id}`, { method: 'DELETE' }); ElMessage.success('已删除'); load() }
 onMounted(() => { loadActivities(); load() })
 </script>
 

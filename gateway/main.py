@@ -37,6 +37,8 @@ class GenerateArticleReq(BaseModel):
 class ChatReq(BaseModel):
     question: str
     activity_id: Optional[int] = None
+    history: List[Dict[str, str]] = []
+    activity_context: Optional[str] = None
 
 
 class ExtractFaqReq(BaseModel):
@@ -108,7 +110,12 @@ def polish_article(req: PolishReq):
 
 @app.post("/api/ai/chat")
 def chat(req: ChatReq):
-    result = ai_gateway.chat(req.question, activity_id=req.activity_id)
+    result = ai_gateway.chat(
+        req.question,
+        activity_id=req.activity_id,
+        history=req.history,
+        activity_context=req.activity_context,
+    )
     return {"answer": result["answer"], "source": result["source"]}
 
 

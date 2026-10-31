@@ -87,7 +87,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { session } from '../auth/session.js'
 
-const API = 'http://localhost:8000'
+const API = import.meta.env.VITE_API_BASE_URL || '/api'
+const ASSET_BASE = API.replace(/\/api\/?$/, '')
 const TYPES = ['学科类', '文体类', '科创竞赛', '社会实践']
 const route = useRoute()
 const router = useRouter()
@@ -132,10 +133,10 @@ const uploadCover = async ({ file }) => {
   const fd = new FormData()
   fd.append('file', file)
   try {
-    const r = await fetch(`${API}/api/upload`, { method: 'POST', body: fd })
+    const r = await fetch(`${API}/upload`, { method: 'POST', body: fd })
     const d = await r.json()
     if (d.code === 0) {
-      form.cover_image = `${API}${d.data.url}`
+      form.cover_image = `${ASSET_BASE}${d.data.url}`
       ElMessage.success('封面已上传')
     } else {
       ElMessage.error(d.message || '上传失败')
@@ -152,7 +153,7 @@ const removeCover = () => {
 
 onMounted(async () => {
   if (isEdit.value) {
-    const d = await (await fetch(`${API}/api/activities/${route.params.id}`)).json()
+    const d = await (await fetch(`${API}/activities/${route.params.id}`)).json()
     origStatus.value = d.data?.status || 'draft'
     isTeam.value = (d.data?.max_team_member || 1) > 1
     Object.assign(form, d.data)
@@ -171,7 +172,7 @@ const save = async () => {
   }
   saving.value = true
   try {
-    const url = isEdit.value ? `${API}/api/activities/${route.params.id}` : `${API}/api/activities`
+    const url = isEdit.value ? `${API}/activities/${route.params.id}` : `${API}/activities`
     const r = await fetch(url, { method: isEdit.value ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
     if (!r.ok) {
       const e = await r.json().catch(() => ({}))
