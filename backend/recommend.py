@@ -21,10 +21,10 @@ NEED_KEYS = ("need_comprehensive_score", "need_conduct_score", "need_innovation_
 
 def _profile_of(row) -> dict:
     return {
-        "major": row["major"],
-        "grade": row["grade"],
-        "interests": row["interests"],
-        "skills": row["skills"],
+        "major": row["major"] or "",
+        "grade": row["grade"] or "",
+        "interests": row["interests"] or "",
+        "skills": row["skills"] or "",
         "need_comprehensive_score": row["need_comprehensive_score"] or 0,
         "need_conduct_score": row["need_conduct_score"] or 0,
         "need_innovation_score": row["need_innovation_score"] or 0,
