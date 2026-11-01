@@ -3,10 +3,12 @@
 网关作为独立服务运行，其它模块（backend 等）通过 HTTP 调 /api/ai/*，不直接 import。
 启动：uvicorn main:app --reload --port 8100
 """
+import json
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import ai_gateway
@@ -117,6 +119,30 @@ def chat(req: ChatReq):
         activity_context=req.activity_context,
     )
     return {"answer": result["answer"], "source": result["source"]}
+
+
+@app.post("/api/ai/chat-stream")
+def chat_stream(req: ChatReq):
+    """SSE 流式答疑：data: {"delta": "..."}，最后 data: {"done": true, "source": "llm|mock"}"""
+    def gen():
+        source = "llm" if ai_gateway.USE_REAL_LLM else "mock"
+        first = True
+        try:
+            for chunk in ai_gateway.chat_stream(
+                req.question,
+                activity_id=req.activity_id,
+                history=req.history,
+                activity_context=req.activity_context,
+            ):
+                if first and chunk.startswith("[真实网关失败"):
+                    source = "mock"
+                first = False
+                yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'source': source}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e), 'source': 'mock'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/api/ai/extract-faq")
