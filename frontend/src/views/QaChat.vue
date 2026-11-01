@@ -260,7 +260,7 @@ const ask = async () => {
       target.timeout = true
       ElMessage.warning('AI 响应超时，请重试')
     } else {
-      target.answer = target.answer || '回答失败，请重试'
+      target.answer = target.answer || e.message || '回答失败，请重试'
       target.error = true
       ElMessage.error(e.message || '回答失败，请重试')
     }
@@ -325,7 +325,7 @@ const regenerate = async (message) => {
       message.timeout = true
       ElMessage.warning('AI 响应超时，请重试')
     } else {
-      message.answer = message.answer || '回答失败，请重试'
+      message.answer = message.answer || e.message || '回答失败，请重试'
       message.error = true
       ElMessage.error(e.message || '回答失败，请重试')
     }

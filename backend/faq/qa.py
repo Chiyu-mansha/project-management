@@ -242,17 +242,19 @@ def ask_stream(body: AskIn):
             yield _sse("meta", {"source": "llm", "cached": False})
             parts = []
             source = "llm"
+            stream_meta = {"source": "llm"}
             log_id = None
             try:
-                for ev in chat_stream(q, body.activity_id, history=history, activity_context=activity_context or None):
+                for ev in chat_stream(q, body.activity_id, history=history, activity_context=activity_context or None, meta=stream_meta):
                     if ev.get("delta"):
                         parts.append(ev["delta"])
                         yield _sse("delta", {"content": ev["delta"]})
                     elif ev.get("done"):
-                        source = ev.get("source", "llm")
+                        source = ev.get("source", stream_meta.get("source", "llm"))
                     elif ev.get("error"):
                         yield _sse("error", {"message": ev["error"]})
             finally:
+                source = stream_meta.get("source", source)
                 answer = "".join(parts)
                 if answer:
                     log_source = "mock" if source == "mock" else ("llm_ctx" if history else "llm")

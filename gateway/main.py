@@ -128,22 +128,19 @@ def chat(req: ChatReq):
 def chat_stream(req: ChatReq):
     """SSE 流式答疑：data: {"delta": "..."}，最后 data: {"done": true, "source": "llm|mock"}"""
     def gen():
-        source = "llm" if ai_gateway.USE_REAL_LLM else "mock"
-        first = True
+        meta = {"source": "llm" if ai_gateway.USE_REAL_LLM else "mock"}
         try:
             for chunk in ai_gateway.chat_stream(
                 req.question,
                 activity_id=req.activity_id,
                 history=req.history,
                 activity_context=req.activity_context,
+                meta=meta,
             ):
-                if first and chunk.startswith("[真实网关失败"):
-                    source = "mock"
-                first = False
                 yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'done': True, 'source': source}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'source': meta['source']}, ensure_ascii=False)}\n\n"
         except Exception as e:
-            yield f"data: {json.dumps({'error': str(e), 'source': 'mock'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'error': 'AI 服务暂时不可用，请稍后重试', 'source': 'mock'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
