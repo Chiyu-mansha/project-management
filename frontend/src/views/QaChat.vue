@@ -56,7 +56,7 @@
             <el-avatar class="avatar ai-avatar" :size="36">AI</el-avatar>
             <el-card class="answer-card" shadow="never">
               <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'来自知识库':'AI 生成' }}</el-tag><el-button v-if="message.faq_id" link type="primary" size="small" @click="openFaq(message)">查看原 FAQ</el-button></div>
-              <div class="ans-body">{{ message.answer }}</div>
+              <MdPreview :modelValue="message.answer" preview-theme="github" class="ans-md" />
               <div class="tools">
                 <el-tooltip content="复制" placement="top"><el-icon class="tool" @click="copyAnswer(message)"><CopyDocument /></el-icon></el-tooltip>
                 <el-tooltip content="赞" placement="top"><span class="tool emoji" :class="{on:message.feedback==='like'}" @click="like(message)">👍</span></el-tooltip>
@@ -103,6 +103,8 @@
 import { reactive, ref, watch, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, FolderOpened, ArrowDown, Clock, Close, CopyDocument, Refresh } from '@element-plus/icons-vue'
+import { MdPreview } from 'md-editor-v3'
+import 'md-editor-v3/lib/style.css'
 const API = import.meta.env.VITE_API_BASE_URL || '/api'
 const qa = reactive({ question: '', activity_id: '' })
 const activities = ref([]); const messages = ref([]); const loading = ref(false); const conversationRef = ref(null)
@@ -273,7 +275,7 @@ const regenerate = async (message) => {
 .avatar{flex:none;font-size:13px;font-weight:600}
 .user-avatar{background:#3a5bff;color:#fff}
 .ai-avatar{background:#e8efff;color:#3a5bff}
-.answer-card{flex:1;border:1px solid #e1e8f5;border-radius:14px;background:#fff;border-top-left-radius:4px}.ans-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}.answer-label{font-weight:700;color:#33415c}.fid{font-size:12px;color:#9aa4b5}.faq-detail-q{font-weight:700;color:#26334d;margin-bottom:10px}.faq-detail-a{white-space:pre-wrap;line-height:1.8;color:#4a5568}.ans-body{white-space:pre-wrap;line-height:1.8;color:#4a5568;margin-bottom:10px}
+.answer-card{flex:1;border:1px solid #e1e8f5;border-radius:14px;background:#fff;border-top-left-radius:4px}.ans-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}.answer-label{font-weight:700;color:#33415c}.fid{font-size:12px;color:#9aa4b5}.faq-detail-q{font-weight:700;color:#26334d;margin-bottom:10px}.faq-detail-a{white-space:pre-wrap;line-height:1.8;color:#4a5568}.ans-md{margin-bottom:10px}.ans-md :deep(.md-editor-preview-wrapper){padding:0;background:transparent}.ans-md :deep(.md-editor-preview){background:transparent;color:#4a5568;font-size:14px;line-height:1.8}.ans-md :deep(p){margin:6px 0}.ans-md :deep(ul),.ans-md :deep(ol){margin:6px 0;padding-left:20px}.ans-md :deep(li){margin:3px 0}.ans-md :deep(h1),.ans-md :deep(h2),.ans-md :deep(h3),.ans-md :deep(h4){margin:10px 0 6px;line-height:1.4}.ans-md :deep(h1){font-size:20px}.ans-md :deep(h2){font-size:18px}.ans-md :deep(h3){font-size:16px}.ans-md :deep(strong){color:#33415c}.ans-md :deep(code){background:#f2f5fa;border-radius:4px;padding:2px 6px;font-size:13px}.ans-md :deep(blockquote){margin:8px 0;padding:8px 12px;border-left:3px solid #cdd9f0;background:#f7f9ff;color:#5a6a85}
 .tools{display:flex;align-items:center;gap:16px;padding-top:4px}
 .tool{font-size:16px;color:#9aa4b5;cursor:pointer;transition:color .15s}
 .tool:hover{color:#3a5bff}
