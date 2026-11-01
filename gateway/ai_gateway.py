@@ -265,7 +265,7 @@ def chat(question: str, system: str = None, activity_id: int = None, history: li
             return {"answer": _chat_completion(question, system=sys_prompt, history=history), "source": "llm"}
         except Exception as e:
             print(f"\n❌ 真实 API 调用失败，错误原因: {repr(e)}\n")
-            return {"answer": f"[真实网关失败，已降级Mock] {e}", "source": "mock"}
+            return {"answer": "AI 服务暂时不可用，请稍后重试或联系活动负责人。", "source": "mock"}
             
     return {
         "answer": f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。",
@@ -273,7 +273,7 @@ def chat(question: str, system: str = None, activity_id: int = None, history: li
     }
 
 
-def chat_stream(question: str, system: str = None, activity_id: int = None, history: list = None, activity_context: str = None):
+def chat_stream(question: str, system: str = None, activity_id: int = None, history: list = None, activity_context: str = None, meta: dict = None):
     """流式答疑：逐段 yield 文本；USE_REAL_LLM 关闭或失败时降级为 Mock 文本。"""
     if activity_id and not activity_context:
         question = f"【当前活动ID：{activity_id}】关于该活动的问题：{question}"
@@ -288,8 +288,12 @@ def chat_stream(question: str, system: str = None, activity_id: int = None, hist
             return
         except Exception as e:
             print(f"\n❌ 流式 API 调用失败，错误原因: {repr(e)}\n")
-            yield f"[真实网关失败，已降级Mock] {e}"
+            if meta is not None:
+                meta["source"] = "mock"
+            yield "AI 服务暂时不可用，请稍后重试或联系活动负责人。"
             return
+    if meta is not None:
+        meta["source"] = "mock"
     yield f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。"
 
 
