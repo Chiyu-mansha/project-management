@@ -24,13 +24,21 @@ GATEWAY_URL = os.getenv("AI_GATEWAY_URL", "http://127.0.0.1:8100").rstrip("/")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 
 
-def _trigger_faq_extract(activity_id: int):
-    """发布/编辑活动后【异步】触发 FAQ 自动提取（成员3 的接口），失败不影响发布。"""
+def _trigger_faq_extract(activity_id: int, organizer_id: int | None = None):
+    """活动发布后【异步】触发 FAQ 自动提取（成员3 的接口），失败不影响发布。"""
     def _run():
         try:
+            oid = organizer_id
+            if oid is None:
+                conn = get_conn()
+                row = conn.execute("SELECT organizer_id FROM activities WHERE id=?", (activity_id,)).fetchone()
+                conn.close()
+                oid = row["organizer_id"] if row else None
+            headers = {"Authorization": f"Bearer organizer:{oid}"} if oid else {}
             requests.post(
                 f"{BACKEND_URL}/api/faqs/from-activity",
                 json={"activity_id": activity_id},
+                headers=headers,
                 timeout=75,
             )
         except Exception:
@@ -119,7 +127,9 @@ def create_activity(body: ActIn):
     conn.commit()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (new_id,)).fetchone()
     conn.close()
-    _trigger_faq_extract(new_id)
+    # 只有直接发布的活动才自动沉淀 FAQ；草稿等状态不触发
+    if body.status == "published":
+        _trigger_faq_extract(new_id, body.organizer_id)
     return ok(dict_row(row))
 
 
@@ -214,7 +224,9 @@ def update_activity(activity_id: int, body: ActIn):
     conn.commit()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
     conn.close()
-    _trigger_faq_extract(activity_id)
+    # 只在状态首次变为 published 时自动沉淀，避免每次编辑都重复提取
+    if old != "published" and body.status == "published":
+        _trigger_faq_extract(activity_id, body.organizer_id)
     return ok(dict_row(row))
 
 
