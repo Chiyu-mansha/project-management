@@ -69,6 +69,18 @@ def _chat_completion(prompt: str, system: str = "", history: list | None = None)
     """真实调用百炼（OpenAI 兼容 /chat/completions），失败抛异常由上层降级。"""
     if not API_KEY:
         raise RuntimeError("未配置 DASHSCOPE_API_KEY")
+    messages = _build_messages(prompt, system, history)
+    resp = requests.post(
+        f"{BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {API_KEY}"},
+        json={"model": MODEL, "messages": messages},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def _build_messages(prompt: str, system: str = "", history: list | None = None) -> list:
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -80,14 +92,35 @@ def _chat_completion(prompt: str, system: str = "", history: list | None = None)
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _stream_chat_completion(prompt: str, system: str = "", history: list | None = None):
+    """流式调用百炼，逐段 yield 文本。"""
+    if not API_KEY:
+        raise RuntimeError("未配置 DASHSCOPE_API_KEY")
+    messages = _build_messages(prompt, system, history)
     resp = requests.post(
         f"{BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json={"model": MODEL, "messages": messages},
+        json={"model": MODEL, "messages": messages, "stream": True},
         timeout=60,
+        stream=True,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    for raw in resp.iter_lines(decode_unicode=True):
+        if not raw:
+            continue
+        line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
+        if not line or line == "[DONE]":
+            continue
+        try:
+            obj = json.loads(line)
+            chunk = obj["choices"][0].get("delta", {}).get("content", "")
+        except Exception:
+            continue
+        if chunk:
+            yield chunk
 
 
 # ---------- 统一入口：文本生成 / 兜底 ----------
@@ -207,6 +240,26 @@ def chat(question: str, system: str = None, activity_id: int = None, history: li
         "answer": f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。",
         "source": "mock",
     }
+
+
+def chat_stream(question: str, system: str = None, activity_id: int = None, history: list = None, activity_context: str = None):
+    """流式答疑：逐段 yield 文本；USE_REAL_LLM 关闭或失败时降级为 Mock 文本。"""
+    if activity_id and not activity_context:
+        question = f"【当前活动ID：{activity_id}】关于该活动的问题：{question}"
+
+    sys_prompt = system or SYSTEM_QA
+    if activity_context:
+        sys_prompt = f"{sys_prompt}\n\n当前活动信息（优先据此回答，不要编造）：\n{activity_context}"
+
+    if USE_REAL_LLM:
+        try:
+            yield from _stream_chat_completion(question, system=sys_prompt, history=history)
+            return
+        except Exception as e:
+            print(f"\n❌ 流式 API 调用失败，错误原因: {repr(e)}\n")
+            yield f"[真实网关失败，已降级Mock] {e}"
+            return
+    yield f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。"
 
 
 # ---------- 扩展：个性化推荐 ----------

@@ -55,13 +55,13 @@
           <div class="msg-row ai">
             <el-avatar class="avatar ai-avatar" :size="36">AI</el-avatar>
             <el-card class="answer-card" shadow="never">
-              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'来自知识库':'AI 生成' }}</el-tag><el-button v-if="message.faq_id" link type="primary" size="small" @click="openFaq(message)">查看原 FAQ</el-button></div>
+              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'来自知识库':'AI 生成' }}</el-tag><el-button v-if="message.faq_id" link type="primary" size="small" @click="openFaq(message)">查看原 FAQ</el-button><el-tag v-if="message.streaming" type="info" effect="plain">正在生成</el-tag></div>
               <MdPreview :modelValue="message.answer" preview-theme="github" class="ans-md" />
               <div class="tools">
                 <el-tooltip content="复制" placement="top"><el-icon class="tool" @click="copyAnswer(message)"><CopyDocument /></el-icon></el-tooltip>
-                <el-tooltip content="赞" placement="top"><span class="tool emoji" :class="{on:message.feedback==='like'}" @click="like(message)">👍</span></el-tooltip>
-                <el-tooltip content="踩" placement="top"><span class="tool emoji" :class="{on:message.feedback==='dislike'}" @click="dislike(message)">👎</span></el-tooltip>
-                <el-tooltip content="重新生成" placement="top"><el-icon class="tool" @click="regenerate(message)"><Refresh /></el-icon></el-tooltip>
+                <el-tooltip content="赞" placement="top"><span class="tool emoji" :class="{on:message.feedback==='like'}" @click="!message.streaming && like(message)">👍</span></el-tooltip>
+                <el-tooltip content="踩" placement="top"><span class="tool emoji" :class="{on:message.feedback==='dislike'}" @click="!message.streaming && dislike(message)">👎</span></el-tooltip>
+                <el-tooltip content="重新生成" placement="top"><el-icon class="tool" @click="!message.streaming && regenerate(message)"><Refresh /></el-icon></el-tooltip>
               </div>
             </el-card>
           </div>
@@ -183,35 +183,95 @@ const buildHistory = (list = messages.value) => list.slice(-MAX_CONTEXT_MESSAGES
   if (m.answer) turns.push({ role: 'assistant', content: m.answer })
   return turns
 })
-const ask = async () => {
-  if (!qa.question.trim()) return ElMessage.warning('先输入问题')
-  const question = qa.question.trim(); loading.value = true
-  const contextHistory = buildHistory()
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 90000)
-  try {
-    const answer = await fetchAsk(question, false, ctrl.signal, contextHistory)
-    messages.value.push({ question, ...answer, feedback: null, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id) })
-    let current = history.value.find(item => item.id === currentId.value)
-    if (!current) { current = { id: currentId.value, title: conversationName.value, messages: messages.value }; history.value.unshift(current) }
-    current.messages = messages.value; current.activity_id = qa.activity_id
-    if (current.title === '新对话' && !qa.activity_id) conversationName.value = question.slice(0, 18)
-    qa.question = ''; await nextTick(); scrollToEnd()
-  } catch (e) {
-    if (e?.name === 'AbortError') {
-      messages.value.push({ question, answer: 'AI 繁忙，已记录你的问题，稍后重试或联系活动负责人。', source: 'llm', faq_id: null, feedback: null, timeout: true, activity_id: qa.activity_id === '' ? null : Number(qa.activity_id) })
-      ElMessage.warning('AI 繁忙，已记录问题，请稍后重试')
-    } else { throw e }
-  } finally { clearTimeout(timer); loading.value = false }
+const parseSseBlock = (block) => {
+  let event = 'message'
+  const dataLines = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+  }
+  let data = {}
+  try { data = JSON.parse(dataLines.join('\n') || '{}') } catch {}
+  return { event, data }
 }
-const fetchAsk = async (question, noCache, signal, contextHistory = [], activityId = qa.activity_id) => {
+
+const streamAsk = async (question, { signal, contextHistory = [], activityId = qa.activity_id, noCache = false, onMeta, onDelta, onDone } = {}) => {
   const activity_id = activityId === '' || activityId === null || activityId === undefined ? null : Number(activityId)
-  return (await fetch(`${API}/qa/ask`, {
+  const res = await fetch(`${API}/qa/ask-stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question, activity_id, no_cache: noCache, history: contextHistory }),
     signal,
-  })).json()
+  })
+  if (!res.ok || !res.body) throw new Error('流式请求失败，请重试')
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  if (res.headers.get('content-type')?.includes('application/json')) {
+    const data = JSON.parse(await res.text())
+    const answer = data.answer || data.message || ''
+    onMeta?.({ source: data.source || 'llm', faq_id: data.faq_id ?? null, faq_question: data.faq_question || '' })
+    onDelta?.(answer)
+    onDone?.({ source: data.source || 'llm', log_id: data.log_id ?? null, cached: !!data.cached })
+    return
+  }
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let idx
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const block = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+      const { event, data } = parseSseBlock(block)
+      if (event === 'meta') onMeta?.(data)
+      else if (event === 'delta') onDelta?.(data.content || '')
+      else if (event === 'done') onDone?.(data)
+      else if (event === 'error') throw new Error(data.message || '生成失败')
+    }
+  }
+}
+
+const ask = async () => {
+  if (!qa.question.trim()) return ElMessage.warning('先输入问题')
+  const question = qa.question.trim()
+  const contextHistory = buildHistory()
+  const activityId = qa.activity_id === '' ? null : Number(qa.activity_id)
+  messages.value.push({ question, answer: '', source: 'llm', faq_id: null, feedback: null, activity_id: activityId, streaming: true })
+  const target = messages.value[messages.value.length - 1]
+  loading.value = true
+  qa.question = ''
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 60000)
+  try {
+    await streamAsk(question, {
+      signal: ctrl.signal,
+      contextHistory,
+      activityId,
+      onMeta: (meta) => Object.assign(target, meta),
+      onDelta: (text) => { target.answer += text; scrollToEnd() },
+      onDone: (meta) => Object.assign(target, meta, { streaming: false, cached: !!meta.cached }),
+    })
+    target.streaming = false
+  } catch (e) {
+    target.streaming = false
+    if (e?.name === 'AbortError') {
+      target.answer = (target.answer ? target.answer + '\n\n' : '') + '（响应超时，请重试）'
+      target.timeout = true
+      ElMessage.warning('AI 响应超时，请重试')
+    } else {
+      target.answer = target.answer || '回答失败，请重试'
+      target.error = true
+      ElMessage.error(e.message || '回答失败，请重试')
+    }
+  } finally {
+    clearTimeout(timer); loading.value = false
+    let current = history.value.find(item => item.id === currentId.value)
+    if (!current) { current = { id: currentId.value, title: conversationName.value, messages: messages.value }; history.value.unshift(current) }
+    current.messages = messages.value; current.activity_id = qa.activity_id
+    if (current.title === '新对话' && !qa.activity_id) conversationName.value = question.slice(0, 18)
+    await nextTick(); scrollToEnd()
+  }
 }
 const scrollToEnd = () => conversationRef.value?.scrollTo({ top: conversationRef.value.scrollHeight, behavior: 'smooth' })
 const copyAnswer = async (message) => {
@@ -242,9 +302,37 @@ const regenerate = async (message) => {
   ElMessage.info('重新生成中…')
   const idx = messages.value.indexOf(message)
   const contextHistory = buildHistory(messages.value.slice(0, idx < 0 ? messages.value.length : idx))
-  const answer = await fetchAsk(message.question, true, undefined, contextHistory, message.activity_id ?? qa.activity_id)
-  Object.assign(message, answer, { feedback: null })
-  await nextTick(); scrollToEnd()
+  const activityId = message.activity_id ?? (qa.activity_id === '' ? null : Number(qa.activity_id))
+  Object.assign(message, { answer: '', source: 'llm', faq_id: null, faq_question: '', log_id: null, cached: false, streaming: true, feedback: null, timeout: false, error: false })
+  loading.value = true
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 60000)
+  try {
+    await streamAsk(message.question, {
+      signal: ctrl.signal,
+      contextHistory,
+      activityId,
+      noCache: true,
+      onMeta: (meta) => Object.assign(message, meta),
+      onDelta: (text) => { message.answer += text; scrollToEnd() },
+      onDone: (meta) => Object.assign(message, meta, { streaming: false, cached: !!meta.cached }),
+    })
+    message.streaming = false
+  } catch (e) {
+    message.streaming = false
+    if (e?.name === 'AbortError') {
+      message.answer = (message.answer ? message.answer + '\n\n' : '') + '（响应超时，请重试）'
+      message.timeout = true
+      ElMessage.warning('AI 响应超时，请重试')
+    } else {
+      message.answer = message.answer || '回答失败，请重试'
+      message.error = true
+      ElMessage.error(e.message || '回答失败，请重试')
+    }
+  } finally {
+    clearTimeout(timer); loading.value = false
+    await nextTick(); scrollToEnd()
+  }
 }
 </script>
 
