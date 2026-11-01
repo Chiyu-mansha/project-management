@@ -38,7 +38,7 @@ onMounted(fetchUnread)
             <button :class="{ active: route.path === '/account' }" @click="router.push('/account')"><span class="ico">👤</span><span>账号管理</span></button>
           </nav>
           <div class="org-bottom">
-            <button @click="logout"><span class="ico">🚪</span><span>退出</span></button>
+            <button @click="logout"><span class="ico logout-ico">↪</span><span>退出</span></button>
           </div>
         </aside>
         <main class="org-content"><router-view /></main>
@@ -80,7 +80,7 @@ onMounted(fetchUnread)
 .org-menu button,.org-bottom button{display:flex;align-items:center;gap:10px;padding:11px 12px;border:0;border-radius:9px;background:transparent;color:#56617a;font-size:14px;cursor:pointer;text-align:left;width:100%}
 .org-menu button:hover,.org-bottom button:hover{background:#f3f6fb;color:#2f4f7d}
 .org-menu button.active{background:#eaf1fb;color:#3a67a8;font-weight:600}
-.ico{font-size:16px;line-height:1}
+.ico{font-size:16px;line-height:1}.logout-ico{color:#7a879e;font-weight:600}
 .org-bottom{margin-top:auto;padding-top:12px;border-top:1px solid #eef1f6}
 .org-content{flex:1;min-width:0;padding:24px;background:linear-gradient(180deg,#f0f5ff 0%,#f7f9fc 320px,#f7f9fc 100%);overflow-x:auto}
 .org-content :deep(h2.page-title){margin-top:0}
