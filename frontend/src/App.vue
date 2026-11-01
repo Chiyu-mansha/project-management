@@ -38,7 +38,7 @@ onMounted(fetchUnread)
             <button :class="{ active: route.path === '/account' }" @click="router.push('/account')"><span class="ico">👤</span><span>账号管理</span></button>
           </nav>
           <div class="org-bottom">
-            <button @click="logout"><span class="ico">↩</span><span>退出</span></button>
+            <button @click="logout"><span class="ico">🚪</span><span>退出</span></button>
           </div>
         </aside>
         <main class="org-content"><router-view /></main>
@@ -48,18 +48,18 @@ onMounted(fetchUnread)
       <template v-if="!isAuthPage">
         <header class="app-header"><h1>校园活动智能通知&amp;报名助理</h1></header>
         <nav class="topbar">
-          <el-button link @click="$router.push('/')">🏠 首页</el-button>
-          <el-button link @click="$router.push('/browse')">🎉 活动广场</el-button>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/recommend')">🎯 智能推荐</el-button>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/profile')">👤 我的画像</el-button>
-          <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/qa')">💬 智能答疑</el-button>
+          <el-button link @click="$router.push('/')"><span class="nav-ico">🏠</span><span>首页</span></el-button>
+          <el-button link @click="$router.push('/browse')"><span class="nav-ico">🎉</span><span>活动广场</span></el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/recommend')"><span class="nav-ico">🎯</span><span>智能推荐</span></el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/profile')"><span class="nav-ico">👤</span><span>我的画像</span></el-button>
+          <el-button link @click="$router.push('/registrations')"><span class="nav-ico">📝</span><span>报名管理</span></el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/qa')"><span class="nav-ico">💬</span><span>智能答疑</span></el-button>
           <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
-            <el-button link @click="$router.push('/notifications')">🔔 通知中心</el-button>
+            <el-button link @click="$router.push('/notifications')"><span class="nav-ico">🔔</span><span>通知中心</span></el-button>
           </el-badge>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/account')">账号管理</el-button>
-          <el-button v-if="!session" link type="primary" @click="$router.push('/login')">🔑 登录</el-button>
-          <el-button v-else link @click="logout">退出</el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/account')"><span class="nav-ico">⚙️</span><span>账号管理</span></el-button>
+          <el-button v-if="!session" link type="primary" @click="$router.push('/login')"><span class="nav-ico">🔑</span><span>登录</span></el-button>
+          <el-button v-else link @click="logout"><span class="nav-ico">🚪</span><span>退出</span></el-button>
         </nav>
       </template>
       <main :class="{panel: $route.path !== '/' && !isAuthPage}"><router-view /></main>
@@ -71,7 +71,7 @@ onMounted(fetchUnread)
 .page{min-height:100vh;background:linear-gradient(180deg,#f0f5ff 0%,#f7f9fc 320px,#f7f9fc 100%)}
 .app-header{border-bottom:1px solid #ebeef5;padding:16px 24px;background:#fff}
 .app-header h1{max-width:1400px;margin:0 auto;color:#303133;font-size:22px}
-.topbar{max-width:1400px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:14px 24px}
+.topbar{max-width:1400px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:14px 24px}.topbar :deep(.el-button){height:32px;padding:0 4px}.topbar :deep(.el-button>span){display:inline-flex;align-items:center;gap:6px;line-height:1;white-space:nowrap}.nav-ico{width:18px;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1}
 .panel{max-width:1400px;margin:0 auto;background:#fff;border-radius:12px;padding:18px;box-shadow:0 4px 16px rgba(0,0,0,.06);margin-bottom:24px}
 .org-layout{display:flex;min-height:100vh;width:100%}
 .org-sidebar{flex:0 0 210px;display:flex;flex-direction:column;background:#fff;border-right:1px solid #eef1f6;padding:20px 12px}
