@@ -29,6 +29,7 @@ from account import router as account_router
 from recommend import router as recommend_router
 from forms import router as forms_router
 from registrations import router as registrations_router
+from credentials import router as credentials_router, init_pod3_tables
 
 try:
     from dotenv import load_dotenv
@@ -67,6 +68,7 @@ app.include_router(account_router)
 app.include_router(recommend_router)
 app.include_router(forms_router)
 app.include_router(registrations_router)
+app.include_router(credentials_router)
 
 
 @app.get("/api/hello")
@@ -89,6 +91,7 @@ async def upload_image(file: UploadFile = File(...)):
 @app.on_event("startup")
 def startup() -> None:
     db.init_db()
+    init_pod3_tables()
     start_scheduler()  # 新增：启动定时任务
 
 

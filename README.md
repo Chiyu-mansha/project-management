@@ -36,13 +36,23 @@ npm run dev
 
 ```
 backend/
-  main.py          # FastAPI 入口(含 CORS、/api/hello)
-  schema.sql       # 九张表建表语句(与飞书《数据库 Schema v1.1》一致)
+  main.py          # FastAPI 入口(POD-1/2/3 路由)
+  schema.sql       # 全组共享 SQLite schema v1.5
+  pod3_schema.sql  # POD-3 仅补 credentials 唯一索引，不重建共享表
+  credentials.py   # 签到 / 确认 / 签章 / 凭证仓库
   requirements.txt
 frontend/
-  src/App.vue      # 报名模块入口
-  src/domain/      # POD-2 报名组件、拼音 key 生成及详情适配
+  src/views/Credentials.vue     # 学生凭证页
+  src/views/CheckinManage.vue   # 发布者签到核销
+  src/domain/                   # POD-2 报名组件
 ```
+
+## POD-3 第 5 周（进 main）
+
+- 使用共享认证：`Authorization: Bearer student:<id>` / `organizer:<id>`。
+- 签到前必须已在 `registration_members` 中报名。
+- 凭证写入 schema v1.5 的 `credentials` 表：`issued → confirmed → signed`。
+- 学生页：`/credentials`；活动详情可签到；发布者在活动详情进入 `/activities/:id/checkins`。
 
 ## 分支规则
 

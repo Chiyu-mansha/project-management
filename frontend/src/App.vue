@@ -63,6 +63,7 @@ onMounted(fetchUnread)
           <el-button v-if="session?.role === 'student'" link @click="$router.push('/recommend')">🎯 智能推荐</el-button>
           <el-button v-if="session?.role === 'student'" link @click="$router.push('/profile')">👤 我的画像</el-button>
           <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/credentials')">🎫 我的凭证</el-button>
           <el-button v-if="session?.role === 'student'" link @click="$router.push('/qa')">💬 智能答疑</el-button>
           
           <!-- 👇 新增 class="nav-badge" 来修复对齐问题 -->

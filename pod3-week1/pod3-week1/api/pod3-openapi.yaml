@@ -1,0 +1,657 @@
+openapi: 3.0.3
+info:
+  title: POD-3 Credential Management API
+  version: 1.0.0
+  description: >-
+    API contract for check-in verification, electronic activity tickets,
+    roster confirmation, electronic sealing, credential warehouse and exports.
+servers:
+  - url: http://127.0.0.1:8088/api/v1
+    description: Local mock server
+  - url: https://api.example.edu/api/v1
+    description: Placeholder integration environment
+tags:
+  - name: Check-in
+  - name: Confirmation
+  - name: Credential
+  - name: Export
+
+paths:
+  /activities/{activity_id}/check-ins:
+    post:
+      tags: [Check-in]
+      summary: Verify a check-in and issue an electronic activity ticket
+      operationId: createCheckIn
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckInRequest'
+            example:
+              student_id: 30000000-0000-4000-8000-000000000001
+              channel: QR
+              checked_in_at: '2026-10-13T08:00:00Z'
+              title: 校园软件项目管理实践活动
+              organizer_name: 软件工程课程组
+              comprehensive_score: 1.0
+      responses:
+        '201':
+          description: Check-in accepted and credential issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResult'
+        '200':
+          description: Idempotent replay; the original result is returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /activities/{activity_id}/confirmation-batches:
+    post:
+      tags: [Confirmation]
+      summary: Confirm a roster of issued credentials
+      operationId: createConfirmationBatch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConfirmationBatchRequest'
+            example:
+              credential_ids:
+                - 40000000-0000-4000-8000-000000000001
+              confirmed_by: 50000000-0000-4000-8000-000000000001
+              note: 第一批活动签到名单
+      responses:
+        '201':
+          description: Roster confirmed and credentials moved to CONFIRMED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmationBatch'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /confirmation-batches/{batch_id}/seal:
+    post:
+      tags: [Confirmation]
+      summary: Apply an electronic seal to a confirmed roster
+      operationId: sealConfirmationBatch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BatchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SealBatchRequest'
+            example:
+              seal_id: 60000000-0000-4000-8000-000000000001
+              signed_by: 50000000-0000-4000-8000-000000000001
+      responses:
+        '200':
+          description: Batch and credentials sealed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SealBatchResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /students/{student_id}/credentials:
+    get:
+      tags: [Credential]
+      summary: List credentials in a student's credential warehouse
+      operationId: listStudentCredentials
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/StudentId'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/CredentialStatus'
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: page_token
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Credential page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /credentials/{credential_id}:
+    get:
+      tags: [Credential]
+      summary: Get credential details
+      operationId: getCredential
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Credential details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Credential'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /credentials/{credential_id}/pdf:
+    get:
+      tags: [Credential]
+      summary: Get a temporary URL for a sealed credential PDF
+      operationId: getCredentialPdf
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      responses:
+        '200':
+          description: Temporary PDF download information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadInfo'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Credential is not sealed or has been revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /students/{student_id}/exports:
+    post:
+      tags: [Export]
+      summary: Create a comprehensive-evaluation credential bundle export
+      operationId: createStudentExport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/StudentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StudentExportRequest'
+      responses:
+        '202':
+          description: Export job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /activities/{activity_id}/bonus-list-exports:
+    post:
+      tags: [Export]
+      summary: Export the organizer's comprehensive-evaluation bonus roster
+      operationId: createBonusListExport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ActivityId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BonusListExportRequest'
+      responses:
+        '202':
+          description: Export job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /export-jobs/{job_id}:
+    get:
+      tags: [Export]
+      summary: Get export job status
+      operationId: getExportJob
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Export job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ActivityId:
+      name: activity_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    StudentId:
+      name: student_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CredentialId:
+      name: credential_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BatchId:
+      name: batch_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Unique key for safely replaying a create request
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Duplicate resource or invalid state transition
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    CheckInRequest:
+      type: object
+      required: [student_id, channel, title]
+      properties:
+        student_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [QR, MANUAL, IMPORT]
+        checked_in_at:
+          type: string
+          format: date-time
+        operator_id:
+          type: string
+          format: uuid
+          nullable: true
+        title:
+          type: string
+          maxLength: 200
+        organizer_name:
+          type: string
+          maxLength: 200
+        comprehensive_score:
+          type: number
+          minimum: 0
+
+    CheckIn:
+      type: object
+      required: [id, activity_id, student_id, status, channel, checkin_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        activity_id:
+          type: string
+          format: uuid
+        student_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [SUCCESS, CANCELLED]
+        channel:
+          type: string
+          enum: [QR, MANUAL, IMPORT]
+        checkin_at:
+          type: string
+          format: date-time
+
+    CredentialStatus:
+      type: string
+      enum: [ISSUED, CONFIRMED, SEALED, REVOKED]
+
+    Credential:
+      type: object
+      required:
+        - id
+        - credential_no
+        - activity_id
+        - student_id
+        - title
+        - status
+        - issued_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        credential_no:
+          type: string
+        checkin_id:
+          type: string
+          format: uuid
+        activity_id:
+          type: string
+          format: uuid
+        student_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        organizer_name:
+          type: string
+          nullable: true
+        comprehensive_score:
+          type: number
+          nullable: true
+        status:
+          $ref: '#/components/schemas/CredentialStatus'
+        issued_at:
+          type: string
+          format: date-time
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        sealed_at:
+          type: string
+          format: date-time
+          nullable: true
+        pdf_sha256:
+          type: string
+          nullable: true
+
+    CheckInResult:
+      type: object
+      required: [check_in, credential]
+      properties:
+        check_in:
+          $ref: '#/components/schemas/CheckIn'
+        credential:
+          $ref: '#/components/schemas/Credential'
+
+    CreateConfirmationBatchRequest:
+      type: object
+      required: [credential_ids, confirmed_by]
+      properties:
+        credential_ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        confirmed_by:
+          type: string
+          format: uuid
+        note:
+          type: string
+          maxLength: 1000
+
+    ConfirmationBatch:
+      type: object
+      required: [id, activity_id, batch_no, status, credential_ids, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        activity_id:
+          type: string
+          format: uuid
+        batch_no:
+          type: string
+        status:
+          type: string
+          enum: [DRAFT, CONFIRMED, SEALED, CANCELLED]
+        credential_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        confirmed_by:
+          type: string
+          format: uuid
+          nullable: true
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        sealed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    SealBatchRequest:
+      type: object
+      required: [seal_id, signed_by]
+      properties:
+        seal_id:
+          type: string
+          format: uuid
+        signed_by:
+          type: string
+          format: uuid
+
+    SealBatchResult:
+      type: object
+      required: [batch, credentials, signed_file]
+      properties:
+        batch:
+          $ref: '#/components/schemas/ConfirmationBatch'
+        credentials:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credential'
+        signed_file:
+          $ref: '#/components/schemas/DownloadInfo'
+
+    CredentialList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Credential'
+        next_page_token:
+          type: string
+          nullable: true
+
+    DownloadInfo:
+      type: object
+      required: [download_url, expires_at, sha256]
+      properties:
+        download_url:
+          type: string
+          format: uri
+        expires_at:
+          type: string
+          format: date-time
+        sha256:
+          type: string
+          minLength: 64
+          maxLength: 64
+
+    StudentExportRequest:
+      type: object
+      properties:
+        activity_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        issued_from:
+          type: string
+          format: date
+        issued_to:
+          type: string
+          format: date
+
+    BonusListExportRequest:
+      type: object
+      properties:
+        include_unsealed:
+          type: boolean
+          default: false
+        format:
+          type: string
+          enum: [XLSX, CSV]
+          default: XLSX
+
+    ExportJob:
+      type: object
+      required: [id, export_type, requester_id, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        export_type:
+          type: string
+          enum: [STUDENT_CREDENTIAL_BUNDLE, ORGANIZER_BONUS_LIST]
+        requester_id:
+          type: string
+          format: uuid
+        student_id:
+          type: string
+          format: uuid
+          nullable: true
+        activity_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum: [PENDING, PROCESSING, SUCCEEDED, FAILED]
+        download:
+          allOf:
+            - $ref: '#/components/schemas/DownloadInfo'
+          nullable: true
+        row_count:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        error_code:
+          type: string
+          nullable: true
+
+    Error:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        request_id:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
