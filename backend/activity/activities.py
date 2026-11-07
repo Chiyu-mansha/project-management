@@ -235,7 +235,7 @@ def generate_article(activity_id: int, body: ArticleGenReq):
     if act.get("organizer_id"):
         org = conn.execute("SELECT name, organization FROM organizers WHERE id=?", (act["organizer_id"],)).fetchone()
         if org:
-            act["organizer"] = org["name"] + (f"（{org['organization']}）" if org["organization"] else "")
+            act["organizer"] = org["organization"] if org["organization"] else org["name"]
     conn.close()
     # 综测加分文案（网关拼 prompt 用 zongce_score 字段显示）
     parts = []

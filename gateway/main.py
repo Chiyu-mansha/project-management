@@ -76,13 +76,16 @@ def generate_article(req: GenerateArticleReq):
     guide = _STYLE_GUIDE.get(req.style, _STYLE_GUIDE["简约"])
     prompt = "\n".join([
         f"请为下面这个校园活动写一篇「{req.style}」风格的推广推文（{guide}）。",
+        "请充分利用所有活动信息，把亮点、详情、报名须知都写清楚，内容充实。",
         "",
         "活动信息：",
         f"- 标题：{a.get('title', '')}",
         f"- 主办方：{a.get('organizer', '')}",
         f"- 类型：{a.get('type', '')}",
+        f"- 标签：{a.get('tags', '')}",
         f"- 时间：{a.get('start_time', '')} ~ {a.get('end_time', '')}",
         f"- 地点：{a.get('location', '')}",
+        f"- 报名条件：{a.get('requirements', '')}",
         f"- 报名截止：{a.get('signup_deadline', '')}",
         f"- 综测加分：{a.get('zongce_score', '')}",
         f"- 简介：{a.get('description', '')}",
