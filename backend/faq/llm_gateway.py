@@ -4,6 +4,7 @@
 - 未开启真实网关 / 请求失败 / 超时 → 自动降级本地 Mock，保证答疑与提取不中断
 - 开启方式：backend/.env 里设 USE_REAL_LLM=1
 """
+import json
 import os
 
 import requests
@@ -36,11 +37,61 @@ def chat(question: str, activity_id=None, history=None, activity_context=None) -
             d = _post("/api/ai/chat", payload)
             return {"answer": d.get("answer", ""), "source": d.get("source", "llm")}
         except Exception as e:
-            return {"answer": f"[网关不可用，已降级Mock] {e} | 请查看活动详情页或联系主办方。", "source": "mock"}
+            print(f"[FAQ gateway error] {e}")
+            return {"answer": "AI 服务暂时不可用，请稍后重试或联系活动负责人。", "source": "mock"}
     return {
         "answer": f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。",
         "source": "mock",
     }
+
+
+def chat_stream(question, activity_id=None, history=None, activity_context=None, meta=None):
+    """SSE 流式答疑：yield dict 事件 {"delta": str} / {"done": True, "source": ...}。"""
+    if not USE_REAL_LLM:
+        if meta is not None:
+            meta["source"] = "mock"
+        yield {"delta": f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。"}
+        yield {"done": True, "source": "mock"}
+        return
+    payload = {"question": question, "activity_id": activity_id}
+    if history:
+        payload["history"] = history
+    if activity_context:
+        payload["activity_context"] = activity_context
+    try:
+        with requests.post(
+            f"{GATEWAY_URL}/api/ai/chat-stream",
+            json=payload,
+            timeout=TIMEOUT,
+            stream=True,
+        ) as r:
+            r.raise_for_status()
+            for raw in r.iter_lines(decode_unicode=True):
+                if not raw:
+                    continue
+                line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    continue
+                if event.get("delta"):
+                    yield {"delta": event["delta"]}
+                elif event.get("done"):
+                    if meta is not None:
+                        meta["source"] = event.get("source", "llm")
+                    yield {"done": True, "source": event.get("source", "llm")}
+                elif event.get("error"):
+                    if meta is not None:
+                        meta["source"] = "mock"
+                    yield {"error": "AI 服务暂时不可用，请稍后重试"}
+    except Exception as e:
+        print(f"[FAQ gateway stream error] {e}")
+        if meta is not None:
+            meta["source"] = "mock"
+        yield {"delta": "AI 服务暂时不可用，请稍后重试或联系活动负责人。"}
+        yield {"done": True, "source": "mock"}
 
 
 # ---------- 能力 2：推文关键问题提取 ----------

@@ -18,10 +18,14 @@
       <el-button type="info" plain @click="impDlg = true">📥 活动一键导入</el-button>
       <el-button type="primary" plain @click="openCandidates">🔥 高频待沉淀</el-button>
       <el-button type="danger" plain @click="openDisliked">👎 被踩待优化</el-button>
+      <el-button type="success" plain :disabled="!selectedRows.length" @click="batchPublish">✅ 批量发布（{{ selectedRows.length }}）</el-button>
+      <el-button type="warning" plain :disabled="!selectedRows.length" @click="batchDraft">↩ 批量退回</el-button>
+      <el-button type="danger" plain :disabled="!selectedRows.length" @click="batchDelete">🗑 批量删除</el-button>
       <span class="total">共 {{ total }} 条</span>
     </div>
 
-    <el-table :data="rows" border v-loading="loading" :row-class-name="groupClass" style="width:calc(100% + 200px)" :header-cell-style="{background:'#f5f7fa'}">
+    <el-table ref="tableRef" :data="rows" border v-loading="loading" :row-class-name="groupClass" style="width:calc(100% + 200px)" :header-cell-style="{background:'#f5f7fa'}" @selection-change="onSelectionChange">
+      <el-table-column type="selection" width="46" />
       <el-table-column prop="category" label="分类" width="140">
         <template #default="s"><el-tag :color="catColor(s.row.category)" effect="dark" round>{{ s.row.category || '未分类' }}</el-tag></template>
       </el-table-column>
@@ -128,7 +132,7 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
 import { session } from '../auth/session.js'
 const API = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -138,6 +142,8 @@ const CATS = ['竞赛类', '讲座/分享类', '培训/工作坊类', '招募类
 const CAT_COLORS = { '竞赛类': '#6366f1', '讲座/分享类': '#0ea5e9', '培训/工作坊类': '#8b5cf6', '招募类': '#f59e0b', '文体活动类': '#22c55e', '通知类': '#64748b' }
 const catColor = (c) => CAT_COLORS[c] || '#909399'
 const rows = ref([]); const total = ref(0); const loading = ref(false)
+const tableRef = ref(null); const selectedRows = ref([])
+const onSelectionChange = (list) => { selectedRows.value = list }
 const activities = ref([])
 const query = reactive({ keyword: '', activity_id: '', category: '', status: '' })
 const dlg = ref(false)
@@ -260,6 +266,36 @@ const save = async () => {
   ElMessage.success('保存成功'); dlg.value = false; load()
 }
 const removeRow = async (r) => { await callApi(`${API}/faqs/${r.id}`, { method: 'DELETE' }); ElMessage.success('已删除'); load() }
+
+const selectedIds = () => selectedRows.value.map((r) => r.id)
+const clearSelection = () => { tableRef.value?.clearSelection(); selectedRows.value = [] }
+
+const batchPublish = async () => {
+  const ids = selectedIds()
+  if (!ids.length) return ElMessage.warning('先勾选 FAQ')
+  await ElMessageBox.confirm(`确定批量发布选中的 ${ids.length} 条 FAQ？`, '批量发布', { type: 'warning' })
+  await callApi(`${API}/faqs/batch/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, status: 'published' }) })
+  ElMessage.success('批量发布成功')
+  clearSelection(); load()
+}
+
+const batchDraft = async () => {
+  const ids = selectedIds()
+  if (!ids.length) return ElMessage.warning('先勾选 FAQ')
+  await ElMessageBox.confirm(`确定把选中的 ${ids.length} 条 FAQ 批量退回为待审核？`, '批量退回', { type: 'warning' })
+  await callApi(`${API}/faqs/batch/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, status: 'draft' }) })
+  ElMessage.success('已批量退回')
+  clearSelection(); load()
+}
+
+const batchDelete = async () => {
+  const ids = selectedIds()
+  if (!ids.length) return ElMessage.warning('先勾选 FAQ')
+  await ElMessageBox.confirm(`确定批量删除选中的 ${ids.length} 条 FAQ？删除后不可恢复。`, '批量删除', { type: 'error' })
+  await callApi(`${API}/faqs/batch/delete`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
+  ElMessage.success('批量删除成功')
+  clearSelection(); load()
+}
 onMounted(() => { loadActivities(); load() })
 </script>
 

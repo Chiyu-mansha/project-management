@@ -1,7 +1,7 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from database import get_conn, dict_row
 from auth import require_role
 
@@ -20,6 +20,15 @@ class FaqIn(BaseModel):
     source: Optional[str] = "auto"
     status: Optional[str] = "published"
     origin_title: Optional[str] = ""
+
+
+class BatchStatusIn(BaseModel):
+    ids: List[int]
+    status: str
+
+
+class BatchIdsIn(BaseModel):
+    ids: List[int]
 
 
 @router.get("")
@@ -75,6 +84,41 @@ def create_faq(body: FaqIn, user: dict = Depends(require_role("ORGANIZER"))):
     row = conn.execute("SELECT * FROM faqs WHERE id=?", (new_id,)).fetchone()
     conn.close()
     return dict_row(row)
+
+
+def _clean_ids(ids: List[int]) -> list:
+    cleaned = sorted({int(i) for i in ids if int(i) > 0})
+    if not cleaned:
+        raise HTTPException(400, "请选择至少一条 FAQ")
+    return cleaned
+
+
+@router.post("/batch/status")
+def batch_status(body: BatchStatusIn, user: dict = Depends(require_role("ORGANIZER"))):
+    """批量发布/退回：status 只允许 published / draft。"""
+    ids = _clean_ids(body.ids)
+    if body.status not in ("published", "draft"):
+        raise HTTPException(400, "status 只能是 published 或 draft")
+    conn = get_conn()
+    marks = ",".join("?" * len(ids))
+    cur = conn.execute(
+        f"UPDATE faqs SET status=?, updated_at=? WHERE id IN ({marks})",
+        [body.status, _now(), *ids],
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "updated": cur.rowcount}
+
+
+@router.post("/batch/delete")
+def batch_delete(body: BatchIdsIn, user: dict = Depends(require_role("ORGANIZER"))):
+    ids = _clean_ids(body.ids)
+    conn = get_conn()
+    marks = ",".join("?" * len(ids))
+    cur = conn.execute(f"DELETE FROM faqs WHERE id IN ({marks})", ids)
+    conn.commit()
+    conn.close()
+    return {"ok": True, "deleted": cur.rowcount}
 
 
 @router.put("/{faq_id}")

@@ -1,11 +1,13 @@
+import json
 import re
 from datetime import datetime
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 from database import get_conn, dict_row
 from auth import require_role
-from .llm_gateway import chat, USE_REAL_LLM, similar_question as gw_similar
+from .llm_gateway import chat, chat_stream, USE_REAL_LLM, similar_question as gw_similar
 
 
 def _now():
@@ -113,6 +115,58 @@ def _activity_context(conn, activity_id) -> str:
     return "\n".join(lines)
 
 
+def _find_faq(conn, body: "AskIn", q: str):
+    """按活动/全局范围查已发布 FAQ，返回 sqlite Row 或 None。"""
+    if body.no_cache:
+        return None
+    if body.activity_id is not None:
+        row = conn.execute(
+            "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND activity_id=? AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
+            (body.activity_id, f"%{q}%", q),
+        ).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND activity_id IS NULL AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
+                (f"%{q}%", q),
+            ).fetchone()
+        return row
+    rows = conn.execute(
+        "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 10",
+        (f"%{q}%", q),
+    ).fetchall()
+    if rows:
+        nq = _norm(q)
+        scored = sorted(
+            (dict_row(r) for r in rows),
+            key=lambda d: _overlap(nq, _norm(d.get("question", ""))),
+            reverse=True,
+        )
+        if _overlap(nq, _norm(scored[0].get("question", ""))) >= 0.5:
+            return next((r for r in rows if dict_row(r)["id"] == scored[0]["id"]), None)
+    return None
+
+
+def _find_cached(conn, body: "AskIn", q: str, history: list):
+    """查 7 天内同归一化问题的真实 LLM 缓存；有历史上下文时不读缓存。"""
+    if body.no_cache or history:
+        return None
+    nq = _norm(q)
+    logs = conn.execute(
+        """SELECT question, answer FROM qa_logs WHERE source='llm'
+           AND ((activity_id IS ? AND ? IS NULL) OR activity_id = ?)
+           AND created_at >= datetime('now','-7 days') ORDER BY id DESC LIMIT 50""",
+        (body.activity_id, body.activity_id, body.activity_id),
+    ).fetchall()
+    for lq, la in logs:
+        if _norm(lq) == nq and la and not _is_degraded_answer(la):
+            return la
+    return None
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 @router.post("/ask")
 def ask(body: AskIn):
     q = (body.question or "").strip()
@@ -122,61 +176,18 @@ def ask(body: AskIn):
     history = _clean_history(body.history)
     activity_context = _activity_context(conn, body.activity_id)
     # 1. 先查 FAQ（重新生成时 no_cache=True 跳过）
-    #    选了具体活动 → 先查该活动，没有再查通用(activity_id 为空)；都不跨到别的活动
-    #    未选活动   → 在整个知识库搜索（所有活动 + 通用）
-    row = None
-    if not body.no_cache:
-        if body.activity_id is not None:
-            row = conn.execute(
-                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND activity_id=? AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
-                (body.activity_id, f"%{q}%", q),
-            ).fetchone()
-            if row is None:
-                row = conn.execute(
-                    "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND activity_id IS NULL AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
-                    (f"%{q}%", q),
-                ).fetchone()
-        else:
-            # 全局搜索：LIKE 可能命中多条（如“蜜雪冰城开门时间”命中“食堂开门时间”），
-            # 按归一化字面重合度排序，低于 0.5 宁可走网关也不硬返回，避免串台。
-            rows = conn.execute(
-                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 10",
-                (f"%{q}%", q),
-            ).fetchall()
-            if rows:
-                nq = _norm(q)
-                scored = sorted(
-                    (dict_row(r) for r in rows),
-                    key=lambda d: _overlap(nq, _norm(d.get("question", ""))),
-                    reverse=True,
-                )
-                if _overlap(nq, _norm(scored[0].get("question", ""))) >= 0.5:
-                    row = next((r for r in rows if dict_row(r)["id"] == scored[0]["id"]), None)
+    row = _find_faq(conn, body, q)
     if row:
         d = dict_row(row)
         log_id = _log(conn, body.activity_id, q, d["answer"], "faq")
         conn.commit(); conn.close()
         return {"answer": d["answer"], "source": "faq", "faq_id": d["id"], "faq_question": d.get("question", ""), "log_id": log_id}
     # 2. 未命中 → 先看 7 天内同样归一化问题有没有 llm 缓存，有直接复用，不调网关
-    #    多轮追问不读缓存：同一句话在不同上下文下答案可能不同。
-    nq = _norm(q)
-    if not body.no_cache and not history:
-        # 归一化比对：日志存的是原问题，逐条归一化后比；同活动/同全局范围
-        logs = conn.execute(
-            """SELECT question, answer FROM qa_logs WHERE source='llm'
-               AND ((activity_id IS ? AND ? IS NULL) OR activity_id = ?)
-               AND created_at >= datetime('now','-7 days') ORDER BY id DESC LIMIT 50""",
-            (body.activity_id, body.activity_id, body.activity_id),
-        ).fetchall()
-        cached = None
-        for lq, la in logs:
-            if _norm(lq) == nq and la and not _is_degraded_answer(la):
-                cached = la
-                break
-        if cached:
-            log_id = _log(conn, body.activity_id, q, cached, "llm")
-            conn.commit(); conn.close()
-            return {"answer": cached, "source": "llm", "faq_id": None, "cached": True, "log_id": log_id}
+    cached = _find_cached(conn, body, q, history)
+    if cached:
+        log_id = _log(conn, body.activity_id, q, cached, "llm")
+        conn.commit(); conn.close()
+        return {"answer": cached, "source": "llm", "faq_id": None, "cached": True, "log_id": log_id}
     # 3. 无缓存 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
     result = chat(q, body.activity_id, history=history, activity_context=activity_context or None)
     answer = result["answer"]
@@ -193,6 +204,71 @@ def ask(body: AskIn):
     log_id = _log(conn, body.activity_id, q, answer, log_source)
     conn.commit(); conn.close()
     return {"answer": answer, "source": source, "faq_id": None, "cached": False, "log_id": log_id}
+
+
+@router.post("/ask-stream")
+def ask_stream(body: AskIn):
+    """SSE 流式答疑：meta -> delta* -> done；FAQ/缓存命中也会以单段 delta 返回。"""
+    q = (body.question or "").strip()
+    if not q:
+        def empty():
+            yield _sse("error", {"message": "问题不能为空"})
+        return StreamingResponse(empty(), media_type="text/event-stream")
+
+    def gen():
+        conn = get_conn()
+        history = _clean_history(body.history)
+        activity_context = _activity_context(conn, body.activity_id)
+        try:
+            row = _find_faq(conn, body, q)
+            if row:
+                d = dict_row(row)
+                log_id = _log(conn, body.activity_id, q, d["answer"], "faq")
+                conn.commit()
+                meta = {"source": "faq", "faq_id": d["id"], "faq_question": d.get("question", "")}
+                yield _sse("meta", meta)
+                yield _sse("delta", {"content": d["answer"]})
+                yield _sse("done", {**meta, "log_id": log_id, "cached": False})
+                return
+            cached = _find_cached(conn, body, q, history)
+            if cached:
+                log_id = _log(conn, body.activity_id, q, cached, "llm")
+                conn.commit()
+                yield _sse("meta", {"source": "llm", "cached": True})
+                yield _sse("delta", {"content": cached})
+                yield _sse("done", {"source": "llm", "cached": True, "log_id": log_id})
+                return
+
+            yield _sse("meta", {"source": "llm", "cached": False})
+            parts = []
+            source = "llm"
+            stream_meta = {"source": "llm"}
+            log_id = None
+            try:
+                for ev in chat_stream(q, body.activity_id, history=history, activity_context=activity_context or None, meta=stream_meta):
+                    if ev.get("delta"):
+                        parts.append(ev["delta"])
+                        yield _sse("delta", {"content": ev["delta"]})
+                    elif ev.get("done"):
+                        source = ev.get("source", stream_meta.get("source", "llm"))
+                    elif ev.get("error"):
+                        yield _sse("error", {"message": ev["error"]})
+            finally:
+                source = stream_meta.get("source", source)
+                answer = "".join(parts)
+                if answer:
+                    log_source = "mock" if source == "mock" else ("llm_ctx" if history else "llm")
+                    log_id = _log(conn, body.activity_id, q, answer, log_source)
+                    conn.commit()
+            yield _sse("done", {"source": source, "log_id": log_id, "cached": False})
+        finally:
+            conn.close()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _log(conn, activity_id, question, answer, source):
