@@ -43,18 +43,24 @@ else:
     USE_REAL_LLM = os.getenv("USE_REAL_LLM") == "1"
 
 SYSTEM_EDITOR = (
-    "你是高校活动推文编辑。请严格按下面的 Markdown 结构输出（硬性要求）：\n"
+    "你是高校活动推文编辑，擅长写信息完整、排版精美、吸引大学生的校园活动推文。\n"
+    "请严格按下面的 Markdown 结构输出（硬性要求）：\n"
     "# 主标题（一句话吸睛，可带 emoji）\n"
-    "> 一句亮点宣传语\n\n"
+    "> 一句亮点宣传语，点出活动最吸引人的地方\n\n"
     "## ✨ 活动亮点\n"
-    "- 亮点一\n- 亮点二\n- 亮点三\n\n"
+    "- 至少 3 条，每条具体、有画面感，结合活动类型/标签/简介展开\n\n"
     "## 📅 时间地点\n"
-    "- **时间**：…\n- **地点**：…\n\n"
+    "- **时间**：…\n- **地点**：…\n- **主办方**：…\n\n"
+    "## 📝 活动详情\n"
+    "- **报名条件**：…\n- **报名截止**：…\n- **综测加分**：…\n\n"
+    "## ⚠️ 报名须知\n"
+    "- 报名方式、组队/人数要求等，依据活动信息写，没写的不编造\n\n"
     "---\n\n"
     "## 🔗 报名方式\n"
-    "…\n\n"
+    "引导报名的一句话\n\n"
     "规则：主标题用 #，分节标题用 ##，重点句用 > 引用，分节间用 --- 分隔，关键信息 **加粗**；"
-    "语言贴近大学生，适度 emoji；只写活动信息里有的内容，不编造；300~500 字。"
+    "语言贴近大学生，适度 emoji，有感染力；只写活动信息里有的内容，不编造，缺失字段可省略或写“待定”；"
+    "全文 500~800 字，每个小节都要认真展开，不要一句带过。"
 )
 SYSTEM_QA = "你是一名校园活动智能助手，只回答校园活动、竞赛、电子票、综测加分相关问题，无关问题礼貌拒绝。"
 
@@ -63,6 +69,18 @@ def _chat_completion(prompt: str, system: str = "", history: list | None = None)
     """真实调用百炼（OpenAI 兼容 /chat/completions），失败抛异常由上层降级。"""
     if not API_KEY:
         raise RuntimeError("未配置 DASHSCOPE_API_KEY")
+    messages = _build_messages(prompt, system, history)
+    resp = requests.post(
+        f"{BASE_URL}/chat/completions",
+        headers={"Authorization": f"Bearer {API_KEY}"},
+        json={"model": MODEL, "messages": messages},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def _build_messages(prompt: str, system: str = "", history: list | None = None) -> list:
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -74,14 +92,35 @@ def _chat_completion(prompt: str, system: str = "", history: list | None = None)
         if role in ("user", "assistant") and content:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _stream_chat_completion(prompt: str, system: str = "", history: list | None = None):
+    """流式调用百炼，逐段 yield 文本。"""
+    if not API_KEY:
+        raise RuntimeError("未配置 DASHSCOPE_API_KEY")
+    messages = _build_messages(prompt, system, history)
     resp = requests.post(
         f"{BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
-        json={"model": MODEL, "messages": messages},
+        json={"model": MODEL, "messages": messages, "stream": True},
         timeout=60,
+        stream=True,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    for raw in resp.iter_lines(decode_unicode=True):
+        if not raw:
+            continue
+        line = raw[5:].strip() if raw.startswith("data:") else raw.strip()
+        if not line or line == "[DONE]":
+            continue
+        try:
+            obj = json.loads(line)
+            chunk = obj["choices"][0].get("delta", {}).get("content", "")
+        except Exception:
+            continue
+        if chunk:
+            yield chunk
 
 
 # ---------- 统一入口：文本生成 / 兜底 ----------
@@ -195,12 +234,36 @@ def chat(question: str, system: str = None, activity_id: int = None, history: li
             return {"answer": _chat_completion(question, system=sys_prompt, history=history), "source": "llm"}
         except Exception as e:
             print(f"\n❌ 真实 API 调用失败，错误原因: {repr(e)}\n")
-            return {"answer": f"[真实网关失败，已降级Mock] {e}", "source": "mock"}
+            return {"answer": "AI 服务暂时不可用，请稍后重试或联系活动负责人。", "source": "mock"}
             
     return {
         "answer": f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。",
         "source": "mock",
     }
+
+
+def chat_stream(question: str, system: str = None, activity_id: int = None, history: list = None, activity_context: str = None, meta: dict = None):
+    """流式答疑：逐段 yield 文本；USE_REAL_LLM 关闭或失败时降级为 Mock 文本。"""
+    if activity_id and not activity_context:
+        question = f"【当前活动ID：{activity_id}】关于该活动的问题：{question}"
+
+    sys_prompt = system or SYSTEM_QA
+    if activity_context:
+        sys_prompt = f"{sys_prompt}\n\n当前活动信息（优先据此回答，不要编造）：\n{activity_context}"
+
+    if USE_REAL_LLM:
+        try:
+            yield from _stream_chat_completion(question, system=sys_prompt, history=history)
+            return
+        except Exception as e:
+            print(f"\n❌ 流式 API 调用失败，错误原因: {repr(e)}\n")
+            if meta is not None:
+                meta["source"] = "mock"
+            yield "AI 服务暂时不可用，请稍后重试或联系活动负责人。"
+            return
+    if meta is not None:
+        meta["source"] = "mock"
+    yield f"[Mock答疑] 关于「{question[:30]}」的问题，请查看活动详情页或联系活动负责人。"
 
 
 # ---------- 扩展：个性化推荐 ----------

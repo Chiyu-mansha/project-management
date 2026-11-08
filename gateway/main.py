@@ -3,10 +3,12 @@
 网关作为独立服务运行，其它模块（backend 等）通过 HTTP 调 /api/ai/*，不直接 import。
 启动：uvicorn main:app --reload --port 8100
 """
+import json
 from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import ai_gateway
@@ -76,13 +78,16 @@ def generate_article(req: GenerateArticleReq):
     guide = _STYLE_GUIDE.get(req.style, _STYLE_GUIDE["简约"])
     prompt = "\n".join([
         f"请为下面这个校园活动写一篇「{req.style}」风格的推广推文（{guide}）。",
+        "请充分利用所有活动信息，把亮点、详情、报名须知都写清楚，内容充实。",
         "",
         "活动信息：",
         f"- 标题：{a.get('title', '')}",
         f"- 主办方：{a.get('organizer', '')}",
         f"- 类型：{a.get('type', '')}",
+        f"- 标签：{a.get('tags', '')}",
         f"- 时间：{a.get('start_time', '')} ~ {a.get('end_time', '')}",
         f"- 地点：{a.get('location', '')}",
+        f"- 报名条件：{a.get('requirements', '')}",
         f"- 报名截止：{a.get('signup_deadline', '')}",
         f"- 综测加分：{a.get('zongce_score', '')}",
         f"- 简介：{a.get('description', '')}",
@@ -117,6 +122,27 @@ def chat(req: ChatReq):
         activity_context=req.activity_context,
     )
     return {"answer": result["answer"], "source": result["source"]}
+
+
+@app.post("/api/ai/chat-stream")
+def chat_stream(req: ChatReq):
+    """SSE 流式答疑：data: {"delta": "..."}，最后 data: {"done": true, "source": "llm|mock"}"""
+    def gen():
+        meta = {"source": "llm" if ai_gateway.USE_REAL_LLM else "mock"}
+        try:
+            for chunk in ai_gateway.chat_stream(
+                req.question,
+                activity_id=req.activity_id,
+                history=req.history,
+                activity_context=req.activity_context,
+                meta=meta,
+            ):
+                yield f"data: {json.dumps({'delta': chunk}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'done': True, 'source': meta['source']}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': 'AI 服务暂时不可用，请稍后重试', 'source': 'mock'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.post("/api/ai/extract-faq")

@@ -9,9 +9,9 @@ const router = useRouter()
 const route = useRoute()
 const isAuthPage = computed(() => route.path === '/login' || route.path === '/register')
 
-function logout() { 
-  clearSession(); 
-  router.push('/') 
+function logout() {
+  clearSession();
+  router.push('/')
 }
 
 const unreadCount = ref(0)
@@ -46,7 +46,7 @@ onMounted(fetchUnread)
             <button :class="{ active: route.path === '/account' }" @click="router.push('/account')"><span class="ico">👤</span><span>账号管理</span></button>
           </nav>
           <div class="org-bottom">
-            <button @click="logout"><span class="ico">↩</span><span>退出</span></button>
+            <button @click="logout"><span class="ico logout-ico">↪</span><span>退出</span></button>
           </div>
         </aside>
         <main class="org-content"><router-view /></main>
@@ -58,25 +58,24 @@ onMounted(fetchUnread)
       <template v-if="!isAuthPage">
         <header class="app-header"><h1>校园活动智能通知&amp;报名助理</h1></header>
         <nav class="topbar">
-          <el-button link @click="$router.push('/')">🏠 首页</el-button>
-          <el-button link @click="$router.push('/browse')">🎉 活动广场</el-button>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/recommend')">🎯 智能推荐</el-button>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/profile')">👤 我的画像</el-button>
-          <el-button link @click="$router.push('/registrations')">📝 报名管理</el-button>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/credentials')">🎫 我的凭证</el-button>
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/qa')">💬 智能答疑</el-button>
-          
+          <el-button link @click="$router.push('/')"><span class="nav-ico">🏠</span><span>首页</span></el-button>
+          <el-button link @click="$router.push('/browse')"><span class="nav-ico">🎉</span><span>活动广场</span></el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/recommend')"><span class="nav-ico">🎯</span><span>智能推荐</span></el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/profile')"><span class="nav-ico">👤</span><span>我的画像</span></el-button>
+          <el-button link @click="$router.push('/registrations')"><span class="nav-ico">📝</span><span>报名管理</span></el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/credentials')"><span class="nav-ico">🎫</span><span>我的凭证</span></el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/qa')"><span class="nav-ico">💬</span><span>智能答疑</span></el-button>
+
           <!-- 👇 新增 class="nav-badge" 来修复对齐问题 -->
           <el-badge class="nav-badge" :value="unreadCount" :hidden="unreadCount === 0" :max="99">
-            <el-button link @click="$router.push('/notifications')">🔔 通知中心</el-button>
+            <el-button link @click="$router.push('/notifications')"><span class="nav-ico">🔔</span><span>通知中心</span></el-button>
           </el-badge>
-          
-          <el-button v-if="session?.role === 'student'" link @click="$router.push('/account')">账号管理</el-button>
-          <el-button v-if="!session" link type="primary" @click="$router.push('/login')">🔑 登录</el-button>
-          <el-button v-else link @click="logout">退出</el-button>
+          <el-button v-if="session?.role === 'student'" link @click="$router.push('/account')"><span class="nav-ico">⚙️</span><span>账号管理</span></el-button>
+          <el-button v-if="!session" link type="primary" @click="$router.push('/login')"><span class="nav-ico">🔑</span><span>登录</span></el-button>
+          <el-button v-else link @click="logout"><span class="nav-ico">🚪</span><span>退出</span></el-button>
         </nav>
       </template>
-      
+
       <!-- 路由内容区 -->
       <main class="main-content">
         <div :class="{ panel: $route.path !== '/' && !isAuthPage }" v-if="$route.path !== '/' && !isAuthPage">
@@ -93,7 +92,7 @@ onMounted(fetchUnread)
 .page {
   display: flex;
   flex-direction: column;
-  height: 100vh; 
+  height: 100vh;
   overflow: hidden;
   background: linear-gradient(180deg,#f0f5ff 0%,#f7f9fc 320px,#f7f9fc 100%);
 }
@@ -122,25 +121,28 @@ onMounted(fetchUnread)
   padding: 14px 24px;
   box-sizing: border-box;
 }
+.topbar :deep(.el-button) { height: 32px; padding: 0 4px; }
+.topbar :deep(.el-button > span) { display: inline-flex; align-items: center; gap: 6px; line-height: 1; white-space: nowrap; }
+.nav-ico { width: 18px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1; }
 
-/* 👇 新增：专门修复通知中心高度不一致的问题 */
+/* 通知中心角标对齐修复 */
 .nav-badge {
   display: flex;
   align-items: center;
-  line-height: 1; /* 统一下基准线 */
+  line-height: 1;
 }
 .nav-badge :deep(.el-badge__content) {
-  top: 10px; /* 微调角标红点的位置，使其更自然 */
+  top: 10px;
 }
 
 /* 3. 中间内容区 */
 .main-content {
   flex: 1;
-  overflow-y: auto; 
-  padding: 20px 24px; 
+  overflow-y: auto;
+  padding: 20px 24px;
   box-sizing: border-box;
-  display: flex;           
-  flex-direction: column;  
+  display: flex;
+  flex-direction: column;
 }
 
 /* 4. 面板白板 */
@@ -152,7 +154,7 @@ onMounted(fetchUnread)
   border-radius: 12px;
   padding: 24px;
   box-shadow: 0 4px 16px rgba(0,0,0,.06);
-  flex: 1;                 
+  flex: 1;
   box-sizing: border-box;
 }
 
@@ -165,6 +167,7 @@ onMounted(fetchUnread)
 .org-menu button:hover, .org-bottom button:hover { background: #f3f6fb; color: #2f4f7d; }
 .org-menu button.active { background: #eaf1fb; color: #3a67a8; font-weight: 600; }
 .ico { font-size: 16px; line-height: 1; }
+.logout-ico { color: #7a879e; font-weight: 600; }
 .org-bottom { margin-top: auto; padding-top: 12px; border-top: 1px solid #eef1f6; }
 .org-content { flex: 1; min-width: 0; padding: 24px; background: linear-gradient(180deg,#f0f5ff 0%,#f7f9fc 320px,#f7f9fc 100%); overflow-y: auto; }
 .org-content :deep(h2.page-title) { margin-top: 0; }
