@@ -47,3 +47,9 @@ def require_role(*roles: str):
         return user
 
     return dep
+
+
+def get_optional_user(cred: HTTPAuthorizationCredentials | None = Security(bearer)) -> dict | None:
+    if cred is None:
+        return None
+    return get_current_user(cred)

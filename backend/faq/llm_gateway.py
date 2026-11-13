@@ -116,17 +116,21 @@ def extract_faq(title: str, content: str, count: int = 3) -> list:
 
 # ---------- 能力 3：同义词 / 相似问题匹配 ----------
 
-def similar_question(question: str, candidates: list) -> int:
+def similar_question(question: str, candidates: list, require_llm: bool = False) -> int:
     """返回最相似候选的下标，-1 表示都不相似。"""
     if not candidates:
         return -1
     if USE_REAL_LLM:
         try:
-            d = _post("/api/ai/similar-question", {"question": question, "candidates": candidates})
+            d = _post("/api/ai/similar-question", {
+                "question": question, "candidates": candidates, "require_llm": require_llm,
+            })
             idx = int(d.get("index", -1))
             return idx if 0 <= idx < len(candidates) else -1
         except Exception:
             pass
+    if require_llm:
+        return -1
     # Mock：退化为包含匹配
     norm = lambda s: "".join(ch for ch in s if ch.isalnum())
     q = norm(question)
@@ -135,6 +139,32 @@ def similar_question(question: str, candidates: list) -> int:
         if n and (n in q or q in n):
             return i
     return -1
+
+
+def faq_embedding_model() -> str:
+    response = requests.get(f"{GATEWAY_URL}/api/ai/faq-embeddings", timeout=3)
+    response.raise_for_status()
+    return response.json()["model"]
+
+
+def confirm_faq(question: str, activity: str, history: str, candidates: list) -> int:
+    try:
+        result = _post("/api/ai/confirm-faq", {
+            "question": question, "activity": activity, "history": history, "candidates": candidates,
+        })
+        index = result.get("index")
+        return index if type(index) is int and 0 <= index < len(candidates) else -1
+    except (OSError, ValueError, AttributeError):
+        return -1
+
+
+def faq_embeddings(texts: list[str]) -> tuple[str, list]:
+    response = requests.post(
+        f"{GATEWAY_URL}/api/ai/faq-embeddings", json={"texts": texts}, timeout=12,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data["model"], data["vectors"]
 
 
 # ---------- 兼容旧接口：通用文本生成 ----------

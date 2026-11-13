@@ -30,6 +30,20 @@ def init_db():
         conn.execute("ALTER TABLE faqs ADD COLUMN origin_title TEXT DEFAULT ''")
     if "updated_at" not in cols:
         conn.execute("ALTER TABLE faqs ADD COLUMN updated_at TEXT")
+    if "hit_count" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0")
+    if "last_hit_at" not in cols:
+        conn.execute("ALTER TABLE faqs ADD COLUMN last_hit_at TEXT")
+    conn.execute("""CREATE TABLE IF NOT EXISTS faq_embeddings (
+        faq_id INTEGER PRIMARY KEY,
+        question TEXT NOT NULL,
+        model TEXT NOT NULL,
+        vector BLOB NOT NULL
+    )""")
+    conn.execute("""CREATE TRIGGER IF NOT EXISTS faq_embedding_delete
+        AFTER DELETE ON faqs BEGIN
+            DELETE FROM faq_embeddings WHERE faq_id = OLD.id;
+        END""")
     # 答疑日志表：用于统计高频提问、自动沉淀候选（本地新增，不动共享 schema）
     conn.execute(
         """CREATE TABLE IF NOT EXISTS qa_logs (
@@ -51,6 +65,12 @@ def init_db():
         conn.execute("ALTER TABLE qa_logs ADD COLUMN feedback TEXT")
     if "feedback_at" not in qa_cols:
         conn.execute("ALTER TABLE qa_logs ADD COLUMN feedback_at TEXT")
+    if "user_id" not in qa_cols:
+        conn.execute("ALTER TABLE qa_logs ADD COLUMN user_id INTEGER")
+    if "user_role" not in qa_cols:
+        conn.execute("ALTER TABLE qa_logs ADD COLUMN user_role TEXT")
+    if "session_id" not in qa_cols:
+        conn.execute("ALTER TABLE qa_logs ADD COLUMN session_id TEXT")
     # 活动表迁移：老库是 v1.0 结构(organizer/type/status 等)，新 schema v1.3
     # 新增 organizer_id 等字段；缺列则补列，保证旧 app.db 也能跑
     try:
