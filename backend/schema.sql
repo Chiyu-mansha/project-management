@@ -130,6 +130,8 @@ CREATE TABLE faqs (
     source TEXT DEFAULT auto,               -- auto(AI自动沉淀)/manual(人工新增)/llm
     status TEXT DEFAULT published,          -- published(已发布)/draft(待审核,AI沉淀先入draft人工审核)
     origin_title TEXT DEFAULT '',           -- 推文AI提取时的来源推文标题
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    last_hit_at TEXT,
     updated_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -148,6 +150,9 @@ CREATE TABLE notifications (
 CREATE TABLE qa_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     activity_id INTEGER,
+    user_id INTEGER,
+    user_role TEXT,
+    session_id TEXT,
     question TEXT NOT NULL,
     answer TEXT,
     source TEXT,

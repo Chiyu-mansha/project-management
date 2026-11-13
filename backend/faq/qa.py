@@ -1,13 +1,15 @@
+import hashlib
 import json
 import re
 from datetime import datetime
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from database import get_conn, dict_row
-from auth import require_role
+from auth import get_optional_user, require_role
 from .llm_gateway import chat, chat_stream, USE_REAL_LLM, similar_question as gw_similar
+from .retrieval import PUBLISHED, find_faq
 
 
 def _now():
@@ -19,6 +21,7 @@ router = APIRouter(prefix="/api/qa", tags=["qa"])
 class AskIn(BaseModel):
     activity_id: Optional[int] = None
     question: str
+    session_id: Optional[str] = Field(default=None, max_length=128)
     no_cache: Optional[bool] = False  # 重新生成：跳过 FAQ，直接走大模型
     # 最近几轮对话，前端按 [{role:'user'|'assistant', content:str}] 传入
     history: Optional[List[dict]] = []
@@ -45,14 +48,6 @@ def _norm(q: str) -> str:
     q = re.sub(r"[\s，。？！,\.\?\!、：:；;\"'“”‘’（）()【】\[\]…~-]", "", q)
     q = re.sub(r"(请问|我想问|我想知道|想问一下|谢谢|呢|吗|呀|啊|吧)+$", "", q)
     return q
-
-
-def _overlap(a: str, b: str) -> float:
-    """归一化字面重合度：交集字符数 / 较长者长度，用于双条件判重的第二道门槛。"""
-    if not a or not b:
-        return 0.0
-    sa, sb = set(a), set(b)
-    return len(sa & sb) / max(len(sa), len(sb))
 
 
 _MOCK_ANSWER_PREFIXES = ("[网关不可用", "[真实网关失败", "[Mock")
@@ -115,35 +110,23 @@ def _activity_context(conn, activity_id) -> str:
     return "\n".join(lines)
 
 
-def _find_faq(conn, body: "AskIn", q: str):
-    """按活动/全局范围查已发布 FAQ，返回 sqlite Row 或 None。"""
+def _match_and_log_faq(conn, body: AskIn, q: str, history: list, activity_context: str, identity):
     if body.no_cache:
-        return None
-    if body.activity_id is not None:
-        row = conn.execute(
-            "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND activity_id=? AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
-            (body.activity_id, f"%{q}%", q),
-        ).fetchone()
-        if row is None:
-            row = conn.execute(
-                "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND activity_id IS NULL AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 1",
-                (f"%{q}%", q),
-            ).fetchone()
-        return row
-    rows = conn.execute(
-        "SELECT * FROM faqs WHERE (status='published' OR status IS NULL OR status='') AND (question LIKE ? OR ? LIKE '%'||question||'%') LIMIT 10",
-        (f"%{q}%", q),
-    ).fetchall()
-    if rows:
-        nq = _norm(q)
-        scored = sorted(
-            (dict_row(r) for r in rows),
-            key=lambda d: _overlap(nq, _norm(d.get("question", ""))),
-            reverse=True,
+        return None, None
+    row = find_faq(conn, body.activity_id, q, history, activity_context)
+    if row is None:
+        return None, None
+    with conn:
+        updated = conn.execute(
+            f"""UPDATE faqs AS f SET hit_count = hit_count + 1, last_hit_at = ?
+                WHERE f.id = ? AND f.question = ? AND f.answer = ?
+                  AND f.activity_id IS ? AND {PUBLISHED}""",
+            (_now(), row["id"], row["question"], row["answer"], row["activity_id"]),
         )
-        if _overlap(nq, _norm(scored[0].get("question", ""))) >= 0.5:
-            return next((r for r in rows if dict_row(r)["id"] == scored[0]["id"]), None)
-    return None
+        if not updated.rowcount:
+            return None, None
+        log_id = _log(conn, body.activity_id, q, row["answer"], "faq", identity)
+    return dict_row(row), log_id
 
 
 def _find_cached(conn, body: "AskIn", q: str, history: list):
@@ -153,10 +136,10 @@ def _find_cached(conn, body: "AskIn", q: str, history: list):
     nq = _norm(q)
     logs = conn.execute(
         """SELECT question, answer FROM qa_logs WHERE source='llm'
-           AND ((activity_id IS ? AND ? IS NULL) OR activity_id = ?)
-           AND created_at >= datetime('now','-7 days') ORDER BY id DESC LIMIT 50""",
-        (body.activity_id, body.activity_id, body.activity_id),
-    ).fetchall()
+           AND activity_id IS ?
+           AND datetime(created_at) >= datetime('now','localtime','-7 days') ORDER BY id DESC""",
+        (body.activity_id,),
+    )
     for lq, la in logs:
         if _norm(lq) == nq and la and not _is_degraded_answer(la):
             return la
@@ -168,7 +151,8 @@ def _sse(event: str, data: dict) -> str:
 
 
 @router.post("/ask")
-def ask(body: AskIn):
+def ask(body: AskIn, user: Optional[dict] = Depends(get_optional_user)):
+    identity = _log_identity(body, user)
     q = (body.question or "").strip()
     if not q:
         return {"answer": "问题不能为空", "source": "faq", "faq_id": None}
@@ -176,16 +160,14 @@ def ask(body: AskIn):
     history = _clean_history(body.history)
     activity_context = _activity_context(conn, body.activity_id)
     # 1. 先查 FAQ（重新生成时 no_cache=True 跳过）
-    row = _find_faq(conn, body, q)
-    if row:
-        d = dict_row(row)
-        log_id = _log(conn, body.activity_id, q, d["answer"], "faq")
-        conn.commit(); conn.close()
+    d, log_id = _match_and_log_faq(conn, body, q, history, activity_context, identity)
+    if d:
+        conn.close()
         return {"answer": d["answer"], "source": "faq", "faq_id": d["id"], "faq_question": d.get("question", ""), "log_id": log_id}
     # 2. 未命中 → 先看 7 天内同样归一化问题有没有 llm 缓存，有直接复用，不调网关
     cached = _find_cached(conn, body, q, history)
     if cached:
-        log_id = _log(conn, body.activity_id, q, cached, "llm")
+        log_id = _log(conn, body.activity_id, q, cached, "llm", identity)
         conn.commit(); conn.close()
         return {"answer": cached, "source": "llm", "faq_id": None, "cached": True, "log_id": log_id}
     # 3. 无缓存 → 调 AI 网关服务兜底（未开启/失败自动降级 Mock）
@@ -201,14 +183,15 @@ def ask(body: AskIn):
         log_source = "llm_ctx"
     else:
         log_source = "llm"
-    log_id = _log(conn, body.activity_id, q, answer, log_source)
+    log_id = _log(conn, body.activity_id, q, answer, log_source, identity)
     conn.commit(); conn.close()
     return {"answer": answer, "source": source, "faq_id": None, "cached": False, "log_id": log_id}
 
 
 @router.post("/ask-stream")
-def ask_stream(body: AskIn):
-    """SSE 流式答疑：meta -> delta* -> done；FAQ/缓存命中也会以单段 delta 返回。"""
+def ask_stream(body: AskIn, user: Optional[dict] = Depends(get_optional_user)):
+    """按 meta、delta、done 顺序推送答疑结果。"""
+    identity = _log_identity(body, user)
     q = (body.question or "").strip()
     if not q:
         def empty():
@@ -220,11 +203,8 @@ def ask_stream(body: AskIn):
         history = _clean_history(body.history)
         activity_context = _activity_context(conn, body.activity_id)
         try:
-            row = _find_faq(conn, body, q)
-            if row:
-                d = dict_row(row)
-                log_id = _log(conn, body.activity_id, q, d["answer"], "faq")
-                conn.commit()
+            d, log_id = _match_and_log_faq(conn, body, q, history, activity_context, identity)
+            if d:
                 meta = {"source": "faq", "faq_id": d["id"], "faq_question": d.get("question", "")}
                 yield _sse("meta", meta)
                 yield _sse("delta", {"content": d["answer"]})
@@ -232,7 +212,7 @@ def ask_stream(body: AskIn):
                 return
             cached = _find_cached(conn, body, q, history)
             if cached:
-                log_id = _log(conn, body.activity_id, q, cached, "llm")
+                log_id = _log(conn, body.activity_id, q, cached, "llm", identity)
                 conn.commit()
                 yield _sse("meta", {"source": "llm", "cached": True})
                 yield _sse("delta", {"content": cached})
@@ -258,7 +238,7 @@ def ask_stream(body: AskIn):
                 answer = "".join(parts)
                 if answer:
                     log_source = "mock" if source == "mock" else ("llm_ctx" if history else "llm")
-                    log_id = _log(conn, body.activity_id, q, answer, log_source)
+                    log_id = _log(conn, body.activity_id, q, answer, log_source, identity)
                     conn.commit()
             yield _sse("done", {"source": source, "log_id": log_id, "cached": False})
         finally:
@@ -271,74 +251,101 @@ def ask_stream(body: AskIn):
     )
 
 
-def _log(conn, activity_id, question, answer, source):
+def _log_identity(body: AskIn, user: Optional[dict]) -> tuple:
+    return (user["id"] if user else None, user["role"] if user else None, body.session_id)
+
+
+def _log(conn, activity_id, question, answer, source, identity):
     cur = conn.execute(
-        "INSERT INTO qa_logs(activity_id,question,answer,source,count,created_at) VALUES(?,?,?,?,1,?)",
-        (activity_id, question, answer, source, datetime.now().isoformat(timespec="seconds")),
+        """INSERT INTO qa_logs(activity_id,question,answer,source,count,created_at,user_id,user_role,session_id)
+           VALUES(?,?,?,?,1,?,?,?,?)""",
+        (activity_id, question, answer, source, datetime.now().isoformat(timespec="seconds"), *identity),
     )
     return cur.lastrowid
 
 
+def _merge_candidates(conn, groups):
+    merged_by_activity = {}
+    for group in groups:
+        activity = group["activity_id"]
+        merged = merged_by_activity.setdefault(activity, [])
+        questions = [item["question"] for item in merged]
+        index = -1
+        for start in range(0, len(questions), 20):
+            batch = questions[start:start + 20]
+            payload = json.dumps([activity, group["question"], batch], ensure_ascii=False)
+            cache_key = "SIM:v2:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            row = conn.execute(
+                """SELECT answer FROM qa_logs WHERE source='sim_cache' AND question=?
+                   AND created_at >= datetime('now','-1 day') ORDER BY id DESC LIMIT 1""",
+                (cache_key,),
+            ).fetchone()
+            match = int(row["answer"]) if row else gw_similar(group["question"], batch, require_llm=True)
+            if not 0 <= match < len(batch):
+                continue
+            if row is None:
+                with conn:
+                    conn.execute(
+                        """INSERT INTO qa_logs(question,answer,source,created_at)
+                           VALUES(?,?,'sim_cache',datetime('now'))""",
+                        (cache_key, str(match)),
+                    )
+            index = start + match
+            break
+        if index < 0:
+            merged.append(group)
+        else:
+            merged[index]["count"] += group["count"]
+            merged[index]["users"].update(group["users"])
+    return [group for merged in merged_by_activity.values() for group in merged]
+
+
 @router.get("/candidates")
-def candidates(min_count: int = 3, activity_id: Optional[int] = None):
-    """高频未命中问题 → 待沉淀候选，供管理员审核转 FAQ。"""
+def candidates(
+    min_count: int = Query(3, ge=1),
+    activity_id: Optional[int] = None,
+    min_users: int = Query(2, ge=2),
+):
+    """Rank unanswered FAQ candidates by distinct authenticated users, then total asks."""
     conn = get_conn()
-    logs = conn.execute("SELECT question, answer, activity_id, source FROM qa_logs").fetchall()
-    faq_norm = {_norm(r[0]) for r in conn.execute("SELECT question FROM faqs").fetchall()}
-    groups = {}
-    for r in logs:
-        if r["source"] != "llm":  # 只统计没被 FAQ 命中的
-            continue
-        if _is_degraded_answer(r["answer"]):
-            continue
-        if activity_id is not None and r["activity_id"] != activity_id:
-            continue
-        key = (r["activity_id"], _norm(r["question"]))
-        g = groups.setdefault(key, {"question": r["question"], "answer": r["answer"], "activity_id": r["activity_id"], "count": 0})
-        g["count"] += 1
-        g["answer"] = r["answer"] or g["answer"]
-    # 规则归一化先聚一轮（快）
-    basics = list(groups.values())
-    # 连接要留到合并块之后（合并要用它读写 sim_cache），不能提前 close
-    # 开启真实网关时，再用 AI 做同义词合并（把不同问法归为一类）
-    # 保守策略：循环逐个比对；网关异常/返回-1/格式不对一律不并（宁可漏，不错并）；
-    # 只合并同一活动（activity_id 相等）的组，不跨活动归并。
-    # 同义结果缓存一天：同一组问题串拼成 key，命中直接用，不调网关。
-    if USE_REAL_LLM and len(basics) > 1:
-        merged = []
-        for g in basics:
-            hit = -1
-            try:
-                cands = [m["question"] for m in merged]
-                if cands:
-                    cache_key = "SIM:" + _norm(g["question"]) + "||" + "||".join(sorted(_norm(c) for c in cands))
-                    row = conn.execute(
-                        "SELECT answer FROM qa_logs WHERE source='sim_cache' AND question=? AND created_at >= datetime('now','-1 day')",
-                        (cache_key,),
-                    ).fetchone()
-                    if row:
-                        idx = int(row[0])
-                    else:
-                        idx = gw_similar(g["question"], cands)
-                        conn.execute(
-                            "INSERT INTO qa_logs(activity_id,question,answer,source,count,created_at) VALUES(NULL,?,?,'sim_cache',1,?)",
-                            (cache_key, str(idx), datetime.now().isoformat(timespec="seconds")),
-                        )
-                        conn.commit()
-                    if isinstance(idx, int) and 0 <= idx < len(merged):
-                        if merged[idx]["activity_id"] == g["activity_id"]:
-                            hit = idx
-            except Exception:
-                hit = -1
-            if hit >= 0:
-                merged[hit]["count"] += g["count"]
-            else:
-                merged.append(g)
-        basics = merged
-    conn.close()
-    out = [g for g in basics if _norm(g["question"]) not in faq_norm and g["count"] >= min_count]
-    out.sort(key=lambda x: -x["count"])
-    return {"items": out, "total": len(out), "min_count": min_count}
+    try:
+        scope = "AND activity_id = ?" if activity_id is not None else ""
+        params = (activity_id,) if activity_id is not None else ()
+        logs = conn.execute(
+            f"""SELECT question, answer, activity_id, user_id, user_role, count
+                FROM qa_logs WHERE source = 'llm' {scope} ORDER BY id""",
+            params,
+        )
+        faq_keys = {
+            (row["activity_id"], _norm(row["question"]))
+            for row in conn.execute("SELECT activity_id, question FROM faqs")
+        }
+        groups = {}
+        for row in logs:
+            activity = row["activity_id"]
+            normalized = _norm(row["question"])
+            key = (activity, normalized)
+            if not normalized or key in faq_keys or (None, normalized) in faq_keys:
+                continue
+            if not row["answer"] or _is_degraded_answer(row["answer"]):
+                continue
+            group = groups.setdefault(key, {
+                "question": row["question"], "activity_id": activity, "count": 0, "users": set(),
+            })
+            group["answer"] = row["answer"]
+            group["count"] += row["count"] or 1
+            if row["user_id"] is not None:
+                group["users"].add((row["user_role"], row["user_id"]))
+        basics = _merge_candidates(conn, groups.values()) if USE_REAL_LLM else list(groups.values())
+    finally:
+        conn.close()
+    items = []
+    for group in basics:
+        group["user_count"] = len(group.pop("users"))
+        if group["user_count"] >= min_users and group["count"] >= min_count:
+            items.append(group)
+    items.sort(key=lambda item: (-item["user_count"], -item["count"]))
+    return {"items": items, "total": len(items), "min_count": min_count, "min_users": min_users}
 
 
 @router.post("/feedback")

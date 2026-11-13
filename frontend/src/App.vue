@@ -76,7 +76,7 @@ onMounted(fetchUnread)
       <!-- 路由内容区 -->
       <main class="main-content">
         <div :class="{ panel: $route.path !== '/' && !isAuthPage }" v-if="$route.path !== '/' && !isAuthPage">
-          <router-view />
+          <router-view :key="$route.path === '/qa' ? `qa:${session?.role}:${session?.id}` : undefined" />
         </div>
         <router-view v-else />
       </main>

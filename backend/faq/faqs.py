@@ -1,7 +1,7 @@
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Literal
 from database import get_conn, dict_row
 from auth import require_role
 
@@ -40,6 +40,7 @@ def list_faqs(
     status: Optional[str] = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    sort: Literal["newest", "popular"] = "newest",
 ):
     conn = get_conn()
     where, params = ["1=1"], []
@@ -60,8 +61,9 @@ def list_faqs(
         params += [f"%{keyword}%", f"%{keyword}%"]
     sql_base = f"FROM faqs WHERE {' AND '.join(where)}"
     total = conn.execute(f"SELECT COUNT(*) {sql_base}", params).fetchone()[0]
+    order = "faqs.hit_count DESC, faqs.last_hit_at DESC, faqs.id DESC" if sort == "popular" else "faqs.id DESC"
     rows = conn.execute(
-        f"SELECT faqs.*, (SELECT title FROM activities WHERE activities.id=faqs.activity_id) AS activity_title {sql_base} ORDER BY faqs.id DESC LIMIT ? OFFSET ?",
+        f"SELECT faqs.*, (SELECT title FROM activities WHERE activities.id=faqs.activity_id) AS activity_title {sql_base} ORDER BY {order} LIMIT ? OFFSET ?",
         params + [page_size, (page - 1) * page_size],
     ).fetchall()
     conn.close()
