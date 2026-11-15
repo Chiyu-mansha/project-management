@@ -9,7 +9,7 @@ import os
 import sqlite3
 import uuid
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, Depends, File, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -23,6 +23,7 @@ from notification import notifications_router
 from scheduler import start_scheduler  # 新增定时任务导入
 
 import db
+from auth import get_current_user
 from auth_routes import router as auth_router
 from profile import router as profile_router
 from account import router as account_router
@@ -77,7 +78,7 @@ def hello():
 
 
 @app.post("/api/upload")
-async def upload_image(file: UploadFile = File(...)):
+async def upload_image(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
     """上传图片到 uploads/，返回可访问的 URL。"""
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
