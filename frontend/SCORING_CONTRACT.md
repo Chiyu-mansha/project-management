@@ -1,6 +1,6 @@
-# 画像、推荐与评分：前端交接 v0.2
+# 画像、推荐与评分：前端交接 v0.3
 
-更新日期：2026-10-25。画像/推荐页面已实现，推荐结果已接入 POD-1 的 RecommendCards。报名原交付见 [MEMBER2_REVIEW.md](MEMBER2_REVIEW.md)，本次变化与验证见 [RECOMMENDATION_REVIEW.md](RECOMMENDATION_REVIEW.md)。POD-1 已提供 AI 评分网关代码；本轮用临时数据库及本地 HTTP 评分夹具验证调用链，未验证团队部署的真实 AI 服务。
+更新日期：2026-11-08。画像/推荐页面已实现，推荐结果已接入 POD-1 的 RecommendCards。报名原交付见 [MEMBER2_REVIEW.md](MEMBER2_REVIEW.md)，本次变化与验证见 [RECOMMENDATION_REVIEW.md](RECOMMENDATION_REVIEW.md)。POD-1 已提供 AI 评分网关代码；本轮用临时数据库及本地 HTTP 评分夹具验证调用链，未验证团队部署的真实 AI 服务。本版本将推荐理由（reasons）示例与说明同步为当前后端带分值的实现（原 v0.2 的「兴趣匹配」示例已过期）。
 
 ## 前端字段与业务 API
 
@@ -24,10 +24,12 @@
 推荐响应的显示字段：
 
 ```json
-{"code":0,"data":{"items":[{"activity_id":1,"score":8.4,"scores":{"major":9,"interests":8,"skills":8},"reasons":["兴趣匹配"]}],"total":1}}
+{"code":0,"data":{"items":[{"activity_id":1,"score":8.4,"scores":{"major":9,"interests":8,"skills":8},"reasons":["专业匹配得分9/10","兴趣得分8/10","技能锻炼得分8/10"]}],"total":1}}
 ```
 
 前端把 activity_id 交给 POD-1 活动展示组件，不从推荐响应臆造活动标题/推文；空结果显示空状态，不以示例活动填充。总分由 POD-2 业务后端计算，前端不再排序计算第二份分数。
+
+`reasons` 只由勾选的匹配维度（match_major / match_interests / match_skills）生成，内容带该维度分值（如「专业匹配得分9/10」）；仅勾选积分需求（need_*）不返回理由。前端原样展示服务端理由，不自行拼装或排序。
 
 ## AI 评分调用边界
 

@@ -14,6 +14,8 @@ import Account from '../views/Account.vue'
 import Recommend from '../views/Recommend.vue'
 import Notifications from '../views/Notifications.vue'
 import Browse from '../views/Browse.vue'
+import Credentials from '../views/Credentials.vue'
+import CheckinManage from '../views/CheckinManage.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -26,6 +28,8 @@ const router = createRouter({
     { path: '/activities/:id', component: ActivityDetail },
     { path: '/activities/:id/edit', component: ActivityForm, meta: { role: 'organizer' } },
     { path: '/browse', component: Browse },
+    { path: '/credentials', component: Credentials, meta: { role: 'student' } },
+    { path: '/activities/:id/checkins', component: CheckinManage, meta: { role: 'organizer' } },
     { path: '/registrations', component: RegistrationEntry },
     { path: '/login', component: Login },
     { path: '/register', component: Register },
