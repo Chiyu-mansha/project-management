@@ -100,11 +100,12 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch, computed, onMounted, nextTick } from 'vue'
+import { reactive, ref, watch, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Plus, FolderOpened, ArrowDown, Clock, Close, CopyDocument, Refresh } from '@element-plus/icons-vue'
 import { MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
+import { session } from '../auth/session.js'
 const API = import.meta.env.VITE_API_BASE_URL || '/api'
 const qa = reactive({ question: '', activity_id: '' })
 const activities = ref([]); const messages = ref([]); const loading = ref(false); const conversationRef = ref(null)
@@ -147,12 +148,33 @@ const syncHistory = () => { const cur = history.value.find(i => i.id === current
 watch(conversationName, syncHistory)
 watch(() => qa.activity_id, (id) => { const a = activities.value.find(x => x.id === id); if (a) conversationName.value = a.title })
 
-const STORAGE_KEY = 'qa_state_v1'
+const chatOwner = session.value
+const STORAGE_KEY = chatOwner ? `qa_state_v2:${chatOwner.role}:${chatOwner.id}` : null
+let activeRequest = null
+let disposed = false
+onBeforeUnmount(() => {
+  disposed = true
+  activeRequest?.abort()
+})
+const SESSION_KEY = 'qa_browser_id'
+const browserId = (() => {
+  const generated = Array.from(
+    crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0'),
+  ).join('')
+  try {
+    const saved = localStorage.getItem(SESSION_KEY)
+    if (saved) return saved
+    localStorage.setItem(SESSION_KEY, generated)
+  } catch {}
+  return generated
+})()
 const persist = () => {
+  if (!STORAGE_KEY || disposed) return
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ history: history.value, groups: groups.value, currentId: currentId.value, conversationName: conversationName.value, showGroups: showGroups.value })) } catch {}
 }
-watch([history, groups, currentId, conversationName], persist, { deep: true })
+watch([history, groups, currentId, conversationName, showGroups], persist, { deep: true })
 const restore = () => {
+  if (!STORAGE_KEY) return
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
     if (!s) return
@@ -199,8 +221,13 @@ const streamAsk = async (question, { signal, contextHistory = [], activityId = q
   const activity_id = activityId === '' || activityId === null || activityId === undefined ? null : Number(activityId)
   const res = await fetch(`${API}/qa/ask-stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, activity_id, no_cache: noCache, history: contextHistory }),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(chatOwner?.token ? { Authorization: `Bearer ${chatOwner.token}` } : {}),
+    },
+    body: JSON.stringify({
+      question, activity_id, no_cache: noCache, history: contextHistory, session_id: `${browserId}:${currentId.value}`,
+    }),
     signal,
   })
   if (!res.ok || !res.body) throw new Error('流式请求失败，请重试')
@@ -242,6 +269,7 @@ const ask = async () => {
   loading.value = true
   qa.question = ''
   const ctrl = new AbortController()
+  activeRequest = ctrl
   const timer = setTimeout(() => ctrl.abort(), 60000)
   try {
     await streamAsk(question, {
@@ -254,6 +282,7 @@ const ask = async () => {
     })
     target.streaming = false
   } catch (e) {
+    if (disposed) return
     target.streaming = false
     if (e?.name === 'AbortError') {
       target.answer = (target.answer ? target.answer + '\n\n' : '') + '（响应超时，请重试）'
@@ -265,12 +294,16 @@ const ask = async () => {
       ElMessage.error(e.message || '回答失败，请重试')
     }
   } finally {
-    clearTimeout(timer); loading.value = false
-    let current = history.value.find(item => item.id === currentId.value)
-    if (!current) { current = { id: currentId.value, title: conversationName.value, messages: messages.value }; history.value.unshift(current) }
-    current.messages = messages.value; current.activity_id = qa.activity_id
-    if (current.title === '新对话' && !qa.activity_id) conversationName.value = question.slice(0, 18)
-    await nextTick(); scrollToEnd()
+    clearTimeout(timer)
+    activeRequest = null
+    if (!disposed) {
+      loading.value = false
+      let current = history.value.find(item => item.id === currentId.value)
+      if (!current) { current = { id: currentId.value, title: conversationName.value, messages: messages.value }; history.value.unshift(current) }
+      current.messages = messages.value; current.activity_id = qa.activity_id
+      if (current.title === '新对话' && !qa.activity_id) conversationName.value = question.slice(0, 18)
+      await nextTick(); scrollToEnd()
+    }
   }
 }
 const scrollToEnd = () => conversationRef.value?.scrollTo({ top: conversationRef.value.scrollHeight, behavior: 'smooth' })
@@ -306,6 +339,7 @@ const regenerate = async (message) => {
   Object.assign(message, { answer: '', source: 'llm', faq_id: null, faq_question: '', log_id: null, cached: false, streaming: true, feedback: null, timeout: false, error: false })
   loading.value = true
   const ctrl = new AbortController()
+  activeRequest = ctrl
   const timer = setTimeout(() => ctrl.abort(), 60000)
   try {
     await streamAsk(message.question, {
@@ -319,6 +353,7 @@ const regenerate = async (message) => {
     })
     message.streaming = false
   } catch (e) {
+    if (disposed) return
     message.streaming = false
     if (e?.name === 'AbortError') {
       message.answer = (message.answer ? message.answer + '\n\n' : '') + '（响应超时，请重试）'
@@ -330,8 +365,12 @@ const regenerate = async (message) => {
       ElMessage.error(e.message || '回答失败，请重试')
     }
   } finally {
-    clearTimeout(timer); loading.value = false
-    await nextTick(); scrollToEnd()
+    clearTimeout(timer)
+    activeRequest = null
+    if (!disposed) {
+      loading.value = false
+      await nextTick(); scrollToEnd()
+    }
   }
 }
 </script>

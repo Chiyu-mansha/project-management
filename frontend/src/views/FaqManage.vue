@@ -70,15 +70,32 @@
       <template #footer><el-button @click="dlg=false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="genDlg" title="✨ 推文 AI 提取 FAQ" width="560px">
-      <p style="color:#888;margin-top:0">推文发布后粘贴到这里，AI 自动提取 3-5 个常见问答，以 <b>待审核(draft)</b> 存入，管理员修改后发布。</p>
-      <el-form :model="genForm" label-width="70px">
+    <el-dialog v-model="genDlg" title="✨ 推文 AI 提取 FAQ" width="min(760px, calc(100vw - 32px))"
+      :show-close="!genLoading" :close-on-click-modal="!genLoading" :close-on-press-escape="!genLoading"
+      @closed="genPreview = null">
+      <el-form v-if="!genPreview" :disabled="genLoading" :model="genForm" label-width="70px">
         <el-form-item label="推文标题"><el-input v-model="genForm.title" placeholder="如：编程马拉松报名启动" /></el-form-item>
         <el-form-item label="活动"><el-select v-model="genForm.activity_id" placeholder="输入名称检索，不存在直接回车新建" clearable filterable allow-create default-first-option style="width:100%"><el-option v-for="a in activities" :key="a.id" :label="a.title" :value="a.id" /></el-select></el-form-item>
         <el-form-item label="分类"><el-select v-model="genForm.category" style="width:100%"><el-option v-for="c in CATS" :key="c" :label="c" :value="c" /></el-select></el-form-item>
         <el-form-item label="推文内容"><el-input v-model="genForm.content" type="textarea" :rows="6" placeholder="粘贴推文正文…" /></el-form-item>
       </el-form>
-      <template #footer><el-button @click="genDlg=false">取消</el-button><el-button type="warning" :loading="genLoading" @click="autoGen">AI 提取</el-button></template>
+      <template v-else>
+        <p>编辑并勾选要保存的问答。保存后可在草稿列表中审核发布。</p>
+        <el-empty v-if="!genPreview.length" description="没有提取到有效问答" />
+        <el-form v-else :disabled="genLoading" label-width="54px">
+          <div v-for="(item, index) in genPreview" :key="index" style="margin-bottom:16px">
+            <el-checkbox v-model="item.selected">保存第 {{ index + 1 }} 条</el-checkbox>
+            <el-form-item label="问题"><el-input v-model="item.question" /></el-form-item>
+            <el-form-item label="答案"><el-input v-model="item.answer" type="textarea" :rows="3" /></el-form-item>
+          </div>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button :disabled="genLoading" @click="genDlg = false">取消</el-button>
+        <el-button v-if="genPreview" :disabled="genLoading" @click="genPreview = null">返回</el-button>
+        <el-button v-if="!genPreview" type="warning" :loading="genLoading" @click="autoGen">AI 提取</el-button>
+        <el-button v-else type="primary" :loading="genLoading" :disabled="!genPreview.some(item => item.selected)" @click="saveGenerated">保存草稿</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="impDlg" title="📥 活动一键导入 FAQ" width="480px">
@@ -92,14 +109,15 @@
     </el-dialog>
 
     <el-dialog v-model="candDlg" title="🔥 高频提问待沉淀" width="720px">
-      <p style="color:#888;margin-top:0">系统记录了用户答疑，这里列出被反复问到、但知识库还没有的问题，审核后沉淀为 FAQ 草稿。</p>
+      <p style="color:#888;margin-top:0">至少有两位不同登录用户问过、且达到出现次数阈值的问题才会入选。</p>
       <div style="margin-bottom:10px">
         <span style="color:#666;font-size:13px">最低出现次数：</span>
         <el-input-number v-model="candMin" :min="1" :max="99" size="small" @change="loadCandidates" />
         <el-button size="small" style="margin-left:8px" :loading="candLoading" @click="loadCandidates">刷新</el-button>
       </div>
-      <el-table :data="candidates" border size="small" v-loading="candLoading" empty-text="暂无达到阈值的候选，多问几次同样的未命中问题就会出现">
+      <el-table :data="candidates" border size="small" v-loading="candLoading" empty-text="暂无达到阈值的候选">
         <el-table-column prop="question" label="问题" min-width="220" />
+        <el-table-column prop="user_count" label="提问人数" width="90" />
         <el-table-column prop="count" label="出现次数" width="90">
           <template #default="s"><el-tag type="danger" size="small">{{ s.row.count }} 次</el-tag></template>
         </el-table-column>
@@ -185,24 +203,66 @@ const clearQuery = () => { query.keyword = ''; query.activity_id = ''; query.cat
 const genDlg = ref(false)
 const genForm = reactive({ title: '', content: '', activity_id: null, category: '通知类' })
 const genLoading = ref(false)
+const genPreview = ref(null)
+const postExtraction = async (path, payload) => {
+  const response = await callApi(`${API}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const data = await response.json()
+  if (!response.ok) {
+    throw new Error(typeof data.detail === 'string' ? data.detail : (data.message || '请求失败，请重试'))
+  }
+  return data
+}
 const autoGen = async () => {
   if (!genForm.content.trim()) return ElMessage.warning('先粘贴推文内容')
   genLoading.value = true
   try {
-    // 直接输入了新活动名称（字符串）→ 先建活动再拿 id
-    if (typeof genForm.activity_id === 'string' && genForm.activity_id.trim() !== '') {
-      const r = await callApi(`${API}/activities`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: genForm.activity_id.trim() }) })
-      const raw = await r.json()
-      const created = raw.data || raw
-      genForm.activity_id = created.id
-      if (!activities.value.some(a => a.id === created.id)) activities.value.unshift(created)
+    const data = await postExtraction('/faqs/auto-generate', { title: genForm.title, content: genForm.content })
+    genPreview.value = data.items.map(item => ({ ...item, selected: true }))
+  } catch (error) {
+    ElMessage.error(error.message || 'AI 提取失败，请重试')
+  } finally {
+    genLoading.value = false
+  }
+}
+const saveGenerated = async () => {
+  const items = genPreview.value.filter(item => item.selected)
+    .map(({ question, answer }) => ({ question: question.trim(), answer: answer.trim() }))
+  if (!items.length) return
+  if (items.some(item => !item.question || !item.answer)) {
+    return ElMessage.warning('请填写所选问答的问题和答案')
+  }
+
+  genLoading.value = true
+  try {
+    let activityId = genForm.activity_id || null
+    if (typeof activityId === 'string' && activityId.trim()) {
+      const data = await postExtraction('/activities', { title: activityId.trim() })
+      const activity = data.data || data
+      if (!activity.id) throw new Error('创建活动失败，请重试')
+      activityId = activity.id
+      genForm.activity_id = activity.id
+      if (!activities.value.some(item => item.id === activity.id)) activities.value.unshift(activity)
     }
-    if (genForm.activity_id === '') genForm.activity_id = null
-    const d = await (await callApi(`${API}/faqs/auto-generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(genForm) })).json()
-    if (d.total === 0) ElMessage.warning(`没有新增（跳过重复 ${d.skipped || 0} 条）`)
-    else ElMessage.success(`AI提取${d.total}条${d.skipped ? `，跳过重复${d.skipped}条` : ''}，已存为待审核`)
-    genDlg.value = false; query.status = 'draft'; load()
-  } finally { genLoading.value = false }
+    const data = await postExtraction('/faqs/auto-generate/save', {
+      activity_id: activityId, title: genForm.title, category: genForm.category, items,
+    })
+    if (data.total) {
+      ElMessage.success(`已保存 ${data.total} 条草稿${data.skipped ? `，跳过重复 ${data.skipped} 条` : ''}`)
+    } else {
+      ElMessage.warning(`没有新增草稿，跳过重复 ${data.skipped} 条`)
+    }
+    genDlg.value = false
+    query.status = 'draft'
+    load()
+  } catch (error) {
+    ElMessage.error(error.message || '保存失败，请重试')
+  } finally {
+    genLoading.value = false
+  }
 }
 const approve = async (r) => {
   await callApi(`${API}/faqs/${r.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...r, status: 'published' }) })
