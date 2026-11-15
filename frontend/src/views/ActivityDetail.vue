@@ -123,7 +123,8 @@ const generate = async () => {
   genLoading.value = true
   try {
     const d = await (await fetch(`${API}/activities/${route.params.id}/generate-article`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(session.value?.token ? { Authorization: `Bearer ${session.value.token}` } : {}) },
       body: JSON.stringify({ style: genStyle.value }),
     })).json()
     genContent.value = d.data?.content || ''
@@ -137,7 +138,8 @@ const polish = async () => {
   genLoading.value = true
   try {
     const d = await (await fetch(`${API}/activities/${route.params.id}/polish-article`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(session.value?.token ? { Authorization: `Bearer ${session.value.token}` } : {}) },
       body: JSON.stringify({ content: genContent.value, style: genStyle.value }),
     })).json()
     genContent.value = d.data?.content || genContent.value
@@ -150,7 +152,11 @@ const onUploadImg = async (files, callback) => {
   const urls = await Promise.all(files.map(async (file) => {
     const fd = new FormData()
     fd.append('file', file)
-    const r = await fetch(`${API}/upload`, { method: 'POST', body: fd })
+    const r = await fetch(`${API}/upload`, {
+      method: 'POST',
+      headers: session.value?.token ? { Authorization: `Bearer ${session.value.token}` } : {},
+      body: fd,
+    })
     const d = await r.json()
     return `${ASSET_BASE}${d.data?.url || ''}`
   }))

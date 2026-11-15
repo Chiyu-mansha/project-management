@@ -133,7 +133,11 @@ const uploadCover = async ({ file }) => {
   const fd = new FormData()
   fd.append('file', file)
   try {
-    const r = await fetch(`${API}/upload`, { method: 'POST', body: fd })
+    const r = await fetch(`${API}/upload`, {
+      method: 'POST',
+      headers: session.value?.token ? { Authorization: `Bearer ${session.value.token}` } : {},
+      body: fd,
+    })
     const d = await r.json()
     if (d.code === 0) {
       form.cover_image = `${ASSET_BASE}${d.data.url}`
@@ -173,7 +177,11 @@ const save = async () => {
   saving.value = true
   try {
     const url = isEdit.value ? `${API}/activities/${route.params.id}` : `${API}/activities`
-    const r = await fetch(url, { method: isEdit.value ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+    const r = await fetch(url, {
+      method: isEdit.value ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json', ...(session.value?.token ? { Authorization: `Bearer ${session.value.token}` } : {}) },
+      body: JSON.stringify(form),
+    })
     if (!r.ok) {
       const e = await r.json().catch(() => ({}))
       return ElMessage.error(e.message || '保存失败')
