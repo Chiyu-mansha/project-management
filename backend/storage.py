@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable
 from xml.sax.saxutils import escape
 
+from fpdf import FPDF
 
 
 class LocalFileStorage:
@@ -37,12 +38,10 @@ class LocalFileStorage:
         return f"/api/storage/{object_key}"
 
 
-def _pdf_escape(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-
-
 class CredentialPdfTemplate:
-    """Generate a small, valid PDF certificate without a native dependency."""
+    """Render certificates with a bundled, embedded Simplified Chinese font."""
+
+    FONT_PATH = Path(__file__).resolve().parent / "fonts" / "NotoSansSC-Regular.ttf"
 
     def render(self, credential: dict[str, object]) -> bytes:
         lines = [
@@ -55,37 +54,19 @@ class CredentialPdfTemplate:
             f"状态: {credential.get('status', 'ISSUED')}",
             "本凭证由校园活动平台生成，可通过凭证编号核验。",
         ]
-        # Helvetica is available in every PDF reader; UTF-8 text is kept as a
-        # readable metadata line while the MVP template uses escaped ASCII IDs.
-        ascii_lines = [html.unescape(line).encode("ascii", "replace").decode("ascii") for line in lines]
-        commands = ["BT", "/F1 18 Tf", "72 740 Td", f"({_pdf_escape(ascii_lines[0])}) Tj", "/F1 11 Tf"]
-        for line in ascii_lines[1:]:
-            commands.extend(["0 -32 Td", f"({_pdf_escape(line)}) Tj"])
-        commands.append("ET")
-        stream = "\n".join(commands).encode("latin-1")
-        objects = [
-            b"<< /Type /Catalog /Pages 2 0 R >>",
-            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-            b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
-        ]
-        pdf = bytearray(b"%PDF-1.4\n")
-        offsets = [0]
-        for index, obj in enumerate(objects, start=1):
-            offsets.append(len(pdf))
-            pdf.extend(f"{index} 0 obj\n".encode())
-            pdf.extend(obj)
-            pdf.extend(b"\nendobj\n")
-        xref = len(pdf)
-        pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode())
-        pdf.extend(b"0000000000 65535 f \n")
-        for offset in offsets[1:]:
-            pdf.extend(f"{offset:010d} 00000 n \n".encode())
-        pdf.extend(
-            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
-        )
-        return bytes(pdf)
+        pdf = FPDF(unit="pt", format="A4")
+        pdf.set_margins(left=72, top=88, right=72)
+        pdf.add_font("Noto Sans SC", fname=self.FONT_PATH)
+        pdf.add_page()
+        pdf.set_font("Noto Sans SC", size=18)
+        pdf.multi_cell(w=0, h=24, text=lines[0], new_x="LMARGIN", wrapmode="CHAR")
+        pdf.ln(10)
+
+        pdf.set_font("Noto Sans SC", size=11)
+        for line in lines[1:]:
+            pdf.multi_cell(w=0, h=16, text=html.unescape(line), new_x="LMARGIN", wrapmode="CHAR")
+            pdf.ln(16)
+        return bytes(pdf.output())
 
 
 class LocalSealService:
