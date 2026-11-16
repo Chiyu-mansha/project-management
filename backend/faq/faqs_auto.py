@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from database import get_conn, dict_row
 from auth import require_role
@@ -30,12 +30,12 @@ def _save_items(conn, activity_id, items, category, origin_title):
     且只和同活动/同全局范围比，不跨活动误杀（如“蜜雪冰城”不拦“食堂”）。
     """
     lib = conn.execute(
-        "SELECT question FROM faqs WHERE (activity_id IS ? OR activity_id = ?) OR activity_id IS NULL",
-        (activity_id, activity_id),
+        "SELECT question FROM faqs WHERE activity_id = ? OR activity_id IS NULL ORDER BY id",
+        (activity_id,),
     ).fetchall()
     lib_norm = [(_norm(r[0]), r[0]) for r in lib]
     lib_set = {n for n, _ in lib_norm}
-    seen, saved = set(), []
+    saved = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     skipped = 0
     for it in items[:5]:
@@ -44,26 +44,17 @@ def _save_items(conn, activity_id, items, category, origin_title):
         if not q or not a:
             continue
         key = _norm(q)
-        if not key or key in lib_set or key in seen:
+        if not key or key in lib_set:
             skipped += 1
             continue
         # 同范围候选：全局新问题只和全局比，有活动的只和同活动+全局比
-        dup = False
-        if USE_REAL_LLM and lib_norm:
-            scope = [(n, raw) for n, raw in lib_norm if True][:20]
-            try:
-                idx = gw_similar(q, [raw for _, raw in scope])
-                if isinstance(idx, int) and 0 <= idx < len(scope):
-                    n0, _ = scope[idx]
-                    same_scope = True  # scope 已限定同范围，直接用
-                    if same_scope and _overlap(key, n0) >= 0.6:
-                        dup = True
-            except Exception:
-                dup = False
-        if dup:
+        scope = [raw for normalized, raw in lib_norm if _overlap(key, normalized) >= 0.6] if USE_REAL_LLM else []
+        if any(
+            gw_similar(q, scope[start:start + 20], require_llm=True) >= 0
+            for start in range(0, len(scope), 20)
+        ):
             skipped += 1
             continue
-        seen.add(key)
         lib_set.add(key)
         lib_norm.append((key, q))
         cur = conn.execute(
@@ -83,15 +74,53 @@ class AutoGenIn(BaseModel):
 
 @router.post("/auto-generate")
 def auto_generate(body: AutoGenIn, user: dict = Depends(require_role("ORGANIZER"))):
-    """推文发布后调用：AI 从推文内容提取常见问答，以 draft 存入，待管理员审核。"""
-    # 调 AI 网关服务提取（未开启/失败自动降级模板）
-    items = extract_faq(body.title, body.content, count=5)
+    """从推文提取问答供预览。"""
+    if not body.content.strip():
+        raise HTTPException(400, "请填写推文内容")
+    items = [
+        {"question": item["question"].strip(), "answer": item["answer"].strip()}
+        for item in extract_faq(body.title, body.content, count=5)
+        if isinstance(item, dict)
+        and all(isinstance(item.get(key), str) and item[key].strip() for key in ("question", "answer"))
+    ][:5]
+    return {"items": items, "total": len(items)}
+
+
+class ExtractedFaq(BaseModel):
+    question: str
+    answer: str
+
+    @field_validator("question", "answer")
+    @classmethod
+    def require_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("问题和答案不能为空")
+        return value.strip()
+
+
+class SaveExtractedFaqs(BaseModel):
+    activity_id: Optional[int] = None
+    category: Optional[str] = "通知类"
+    title: str = ""
+    items: list[ExtractedFaq] = Field(min_length=1, max_length=5)
+
+
+@router.post("/auto-generate/save")
+def save_extracted_faqs(body: SaveExtractedFaqs, user: dict = Depends(require_role("ORGANIZER"))):
+    """保存管理员确认的问答为草稿，并按最终文本去重。"""
     conn = get_conn()
-    saved, skipped = _save_items(conn, body.activity_id, items, body.category, body.title)
-    conn.commit()
-    rows = [dict_row(r) for r in conn.execute(f"SELECT *, (SELECT title FROM activities WHERE activities.id=faqs.activity_id) AS activity_title FROM faqs WHERE id IN ({','.join('?'*len(saved))})", saved).fetchall()] if saved else []
-    conn.close()
-    return {"items": rows, "total": len(rows), "skipped": skipped, "tip": "已存为草稿(draft)，请管理员审核修改后发布"}
+    try:
+        with conn:
+            if body.activity_id is not None and not conn.execute(
+                "SELECT 1 FROM activities WHERE id=?", (body.activity_id,),
+            ).fetchone():
+                raise HTTPException(404, "活动不存在")
+            saved, skipped = _save_items(
+                conn, body.activity_id, [item.model_dump() for item in body.items], body.category, body.title,
+            )
+        return {"ids": saved, "total": len(saved), "skipped": skipped}
+    finally:
+        conn.close()
 
 
 class FromActivityIn(BaseModel):

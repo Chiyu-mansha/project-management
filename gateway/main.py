@@ -6,10 +6,10 @@
 import json
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import ai_gateway
 
@@ -52,6 +52,24 @@ class ExtractFaqReq(BaseModel):
 class SimilarReq(BaseModel):
     question: str
     candidates: List[str] = []
+    require_llm: bool = False
+
+
+class FaqEmbeddingsReq(BaseModel):
+    texts: List[str] = Field(min_length=1, max_length=10)
+
+
+class FaqCandidate(BaseModel):
+    activity: str
+    question: str
+    answer: str
+
+
+class ConfirmFaqReq(BaseModel):
+    question: str
+    activity: str = ""
+    history: str = ""
+    candidates: List[FaqCandidate] = Field(min_length=1, max_length=5)
 
 
 class RecommendReq(BaseModel):
@@ -152,7 +170,30 @@ def extract_faq(req: ExtractFaqReq):
 
 @app.post("/api/ai/similar-question")
 def similar_question(req: SimilarReq):
-    return {"index": ai_gateway.similar_question(req.question, req.candidates)}
+    return {"index": ai_gateway.similar_question(req.question, req.candidates, req.require_llm)}
+
+
+@app.get("/api/ai/faq-embeddings")
+def faq_embedding_model():
+    if not ai_gateway.USE_REAL_LLM or not ai_gateway.API_KEY:
+        raise HTTPException(503, "FAQ embedding 服务未启用")
+    return {"model": ai_gateway.EMBEDDING_MODEL}
+
+
+@app.post("/api/ai/confirm-faq")
+def confirm_faq(req: ConfirmFaqReq):
+    return {"index": ai_gateway.confirm_faq(req.model_dump())}
+
+
+@app.post("/api/ai/faq-embeddings")
+def faq_embeddings(req: FaqEmbeddingsReq):
+    if any(not text.strip() or len(text) > 2000 for text in req.texts):
+        raise HTTPException(422, "每条文本须为 1 至 2000 字符")
+    try:
+        vectors = ai_gateway.faq_embeddings(req.texts)
+    except Exception as exc:
+        raise HTTPException(503, "FAQ embedding 服务不可用") from exc
+    return {"model": ai_gateway.EMBEDDING_MODEL, "vectors": vectors}
 
 
 @app.post("/api/ai/recommend")

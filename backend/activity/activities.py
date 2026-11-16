@@ -12,9 +12,10 @@ from datetime import datetime
 from typing import Optional
 
 import requests
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, model_validator
 
+from auth import require_role
 from common import fail, ok
 from database import get_conn, dict_row
 
@@ -112,12 +113,13 @@ _COLUMNS = (
 
 
 @router.post("")
-def create_activity(body: ActIn):
+def create_activity(body: ActIn, user: dict = Depends(require_role("ORGANIZER"))):
     conn = get_conn()
+    # 发布者只能给自己创建活动，organizer_id 强制为当前登录用户，防止冒用他人身份
     cur = conn.execute(
         f"""INSERT INTO activities ({_COLUMNS})
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (body.title, body.type, body.organizer_id, body.start_time, body.end_time, body.location,
+        (body.title, body.type, user["id"], body.start_time, body.end_time, body.location,
          body.description, body.requirements, body.tags, body.has_ticket,
          body.comprehensive_score, body.conduct_score, body.innovation_score,
          body.signup_deadline, body.min_team_member, body.max_team_member,
@@ -129,7 +131,7 @@ def create_activity(body: ActIn):
     conn.close()
     # 只有直接发布的活动才自动沉淀 FAQ；草稿等状态不触发
     if body.status == "published":
-        _trigger_faq_extract(new_id, body.organizer_id)
+        _trigger_faq_extract(new_id, user["id"])
     return ok(dict_row(row))
 
 
@@ -196,13 +198,17 @@ def get_activity(activity_id: int):
 
 
 @router.put("/{activity_id}")
-def update_activity(activity_id: int, body: ActIn):
+def update_activity(activity_id: int, body: ActIn, user: dict = Depends(require_role("ORGANIZER"))):
     # TODO(成员2 第3周)：变更后触发推送（调用通知接口），见接口文档「变更后触发推送」
     conn = get_conn()
-    cur = conn.execute("SELECT status FROM activities WHERE id=?", (activity_id,)).fetchone()
+    cur = conn.execute("SELECT status, organizer_id FROM activities WHERE id=?", (activity_id,)).fetchone()
     if cur is None:
         conn.close()
         fail(404, "活动不存在")
+    # 只有发布者本人能修改
+    if cur["organizer_id"] is not None and cur["organizer_id"] != user["id"]:
+        conn.close()
+        fail(403, "只有发布者本人能修改该活动")
     # 状态机校验：只能按 draft -> published -> ongoing -> finished 前进，cancelled 为终态
     old = cur["status"] or "draft"
     if body.status not in ALLOWED.get(old, {old}):
@@ -215,7 +221,7 @@ def update_activity(activity_id: int, body: ActIn):
             conduct_score=?, innovation_score=?, signup_deadline=?, min_team_member=?,
             max_team_member=?, max_participants=?, status=?, article=?, cover_image=?
             WHERE id=?""",
-        (body.title, body.type, body.organizer_id, body.start_time, body.end_time, body.location,
+        (body.title, body.type, user["id"], body.start_time, body.end_time, body.location,
          body.description, body.requirements, body.tags, body.has_ticket,
          body.comprehensive_score, body.conduct_score, body.innovation_score,
          body.signup_deadline, body.min_team_member, body.max_team_member,
@@ -226,7 +232,7 @@ def update_activity(activity_id: int, body: ActIn):
     conn.close()
     # 只在状态首次变为 published 时自动沉淀，避免每次编辑都重复提取
     if old != "published" and body.status == "published":
-        _trigger_faq_extract(activity_id, body.organizer_id)
+        _trigger_faq_extract(activity_id, user["id"])
     return ok(dict_row(row))
 
 
@@ -235,7 +241,7 @@ class ArticleGenReq(BaseModel):
 
 
 @router.post("/{activity_id}/generate-article")
-def generate_article(activity_id: int, body: ArticleGenReq):
+def generate_article(activity_id: int, body: ArticleGenReq, user: dict = Depends(require_role("ORGANIZER"))):
     """AI 推文生成：查活动 -> 调网关 generate-article -> 返回推文 Markdown。"""
     conn = get_conn()
     row = conn.execute("SELECT * FROM activities WHERE id=?", (activity_id,)).fetchone()
@@ -243,6 +249,9 @@ def generate_article(activity_id: int, body: ArticleGenReq):
         conn.close()
         fail(404, "活动不存在")
     act = dict_row(row)
+    if act.get("organizer_id") is not None and act["organizer_id"] != user["id"]:
+        conn.close()
+        fail(403, "只有发布者本人能操作该活动")
     # 补充主办方名称（网关拼 prompt 用 organizer 字段显示）
     if act.get("organizer_id"):
         org = conn.execute("SELECT name, organization FROM organizers WHERE id=?", (act["organizer_id"],)).fetchone()
@@ -282,8 +291,17 @@ class PolishReq(BaseModel):
 
 
 @router.post("/{activity_id}/polish-article")
-def polish_article(activity_id: int, body: PolishReq):
+def polish_article(activity_id: int, body: PolishReq, user: dict = Depends(require_role("ORGANIZER"))):
     """润色：调网关改写已有推文，保持信息不变只优化表达。"""
+    conn = get_conn()
+    row = conn.execute("SELECT organizer_id FROM activities WHERE id=?", (activity_id,)).fetchone()
+    if row is None:
+        conn.close()
+        fail(404, "活动不存在")
+    if row["organizer_id"] is not None and row["organizer_id"] != user["id"]:
+        conn.close()
+        fail(403, "只有发布者本人能操作该活动")
+    conn.close()
     try:
         resp = requests.post(
             f"{GATEWAY_URL}/api/ai/polish-article",
