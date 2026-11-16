@@ -1,6 +1,7 @@
--- 校园活动智能通知&报名助理 数据库 schema v1.5
--- SQLite 版本;与飞书《数据库 Schema v1.5》文档保持一致
+-- 校园活动智能通知&报名助理 数据库 schema v1.6
+-- SQLite 版本;与飞书《数据库 Schema v1.6》文档保持一致
 -- 任何结构变更先找技术负责人批准,改完立即更新本文档并升版本号
+-- v1.6 备注(11-16 PM 追认补记,变更记录 #21):faqs 新增 hit_count/last_hit_at(答疑命中统计);qa_logs 新增 user_id/user_role/session_id(去重区分用户);新增 faq_embeddings 表 + faq_embedding_delete 触发器(FAQ 向量召回,POD-1 答疑优化落地,未逐项申报追认不追回;表定义由 PM 补入本文档)
 -- v1.5 备注(10-20 变更申请):activities 新增 article(AI推文展示)、cover_image(卡片流封面)(POD-1 申请,PM 批准);users/organizers 新增 avatar(账号管理头像,变更记录 #17,10-26 PM 追认补记);qa_logs 新增 feedback/feedback_at(答疑反馈闭环,变更记录 #18,11-02 PM 追认补记)
 -- v1.3 备注(10-11 变更申请):faqs 改 status 枚举 published/draft、category 按活动类型口径、新增 origin_title;新增 qa_logs 表(POD-1 申请,PM 批准)
 -- v1.4 备注(10-19 新增):新增 activity_scores 打分结果表(POD-2 登录/画像/推荐,记录用户-比赛-各项得分)
@@ -183,3 +184,16 @@ CREATE TABLE activity_scores (
     FOREIGN KEY(user_id) REFERENCES users(id),
     FOREIGN KEY(activity_id) REFERENCES activities(id)
 );
+
+-- 十二、faq_embeddings FAQ 向量表(负责:POD-1,新增 v1.6,变更记录 #21)
+-- 已发布 FAQ 问题的向量,由后端定时任务 refresh_embeddings 每 30 秒增量补齐;答疑向量召回用
+CREATE TABLE faq_embeddings (
+    faq_id INTEGER PRIMARY KEY,             -- 与 faqs.id 一一对应
+    question TEXT NOT NULL,                 -- 生成向量时的问题原文(编辑后自动重算)
+    model TEXT NOT NULL,                    -- embedding 模型版本
+    vector BLOB NOT NULL                    -- 归一化 float32 小端序列
+);
+CREATE TRIGGER faq_embedding_delete
+    AFTER DELETE ON faqs BEGIN
+        DELETE FROM faq_embeddings WHERE faq_id = OLD.id;
+    END
