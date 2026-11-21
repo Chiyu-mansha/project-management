@@ -55,7 +55,7 @@
           <div class="msg-row ai">
             <el-avatar class="avatar ai-avatar" :size="36">AI</el-avatar>
             <el-card class="answer-card" shadow="never">
-              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'来自知识库':'AI 生成' }}</el-tag><el-button v-if="message.faq_id" link type="primary" size="small" @click="openFaq(message)">查看原 FAQ</el-button><el-tag v-if="message.streaming" type="info" effect="plain">正在生成</el-tag></div>
+              <div class="ans-head"><span class="answer-label">智能助手</span><el-tag :type="message.source==='faq'?'success':'warning'">{{ message.source==='faq'?'来自知识库':message.cached?'缓存命中':'AI 生成' }}</el-tag><el-button v-if="message.faq_id" link type="primary" size="small" @click="openFaq(message)">查看原 FAQ</el-button><el-tag v-if="message.streaming" type="info" effect="plain">正在生成</el-tag></div>
               <MdPreview :modelValue="message.answer" preview-theme="github" class="ans-md" />
               <div class="tools">
                 <el-tooltip content="复制" placement="top"><el-icon class="tool" @click="copyAnswer(message)"><CopyDocument /></el-icon></el-tooltip>
@@ -199,7 +199,10 @@ onMounted(async () => {
 const newChat = () => { currentId.value = Date.now(); messages.value = []; qa.question = ''; qa.activity_id = ''; conversationName.value = '新对话'; history.value.unshift({ id: currentId.value, title: '新对话', messages: [] }) }
 const selectHistory = (item) => { currentId.value = item.id; messages.value = item.messages || []; conversationName.value = item.title; qa.activity_id = item.activity_id ?? '' }
 const MAX_CONTEXT_MESSAGES = 4
-const buildHistory = (list = messages.value) => list.slice(-MAX_CONTEXT_MESSAGES).flatMap((m) => {
+const buildHistory = (list = messages.value, activityId = qa.activity_id) => list.filter(m =>
+  (m.activity_id ?? null) === (activityId === '' ? null : Number(activityId)) &&
+  !m.streaming && !m.error && !m.timeout && m.source !== 'mock' && m.answer
+).slice(-MAX_CONTEXT_MESSAGES).flatMap((m) => {
   const turns = []
   if (m.question) turns.push({ role: 'user', content: m.question })
   if (m.answer) turns.push({ role: 'assistant', content: m.answer })
@@ -334,8 +337,8 @@ const dislike = async (message) => {
 const regenerate = async (message) => {
   ElMessage.info('重新生成中…')
   const idx = messages.value.indexOf(message)
-  const contextHistory = buildHistory(messages.value.slice(0, idx < 0 ? messages.value.length : idx))
   const activityId = message.activity_id ?? (qa.activity_id === '' ? null : Number(qa.activity_id))
+  const contextHistory = buildHistory(messages.value.slice(0, idx < 0 ? messages.value.length : idx), activityId)
   Object.assign(message, { answer: '', source: 'llm', faq_id: null, faq_question: '', log_id: null, cached: false, streaming: true, feedback: null, timeout: false, error: false })
   loading.value = true
   const ctrl = new AbortController()
