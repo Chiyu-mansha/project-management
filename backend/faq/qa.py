@@ -10,6 +10,7 @@ from database import get_conn, dict_row
 from auth import get_optional_user, require_role
 from .llm_gateway import chat, chat_stream, USE_REAL_LLM, similar_question as gw_similar
 from .retrieval import PUBLISHED, find_faq
+from .llm_gateway import resolve_question
 
 
 def _now():
@@ -158,6 +159,10 @@ def ask(body: AskIn, user: Optional[dict] = Depends(get_optional_user)):
         return {"answer": "问题不能为空", "source": "faq", "faq_id": None}
     conn = get_conn()
     history = _clean_history(body.history)
+    resolution = resolve_question(q, history)
+    if resolution.get("resolved"):
+        q = resolution["question"].strip()
+        history = []
     activity_context = _activity_context(conn, body.activity_id)
     # 1. 先查 FAQ（重新生成时 no_cache=True 跳过）
     d, log_id = _match_and_log_faq(conn, body, q, history, activity_context, identity)
@@ -201,18 +206,22 @@ def ask_stream(body: AskIn, user: Optional[dict] = Depends(get_optional_user)):
     def gen():
         conn = get_conn()
         history = _clean_history(body.history)
+        resolution = resolve_question(q, history)
+        resolved_q = resolution["question"].strip() if resolution.get("resolved") else q
+        if resolution.get("resolved"):
+            history = []
         activity_context = _activity_context(conn, body.activity_id)
         try:
-            d, log_id = _match_and_log_faq(conn, body, q, history, activity_context, identity)
+            d, log_id = _match_and_log_faq(conn, body, resolved_q, history, activity_context, identity)
             if d:
                 meta = {"source": "faq", "faq_id": d["id"], "faq_question": d.get("question", "")}
                 yield _sse("meta", meta)
                 yield _sse("delta", {"content": d["answer"]})
                 yield _sse("done", {**meta, "log_id": log_id, "cached": False})
                 return
-            cached = _find_cached(conn, body, q, history)
+            cached = _find_cached(conn, body, resolved_q, history)
             if cached:
-                log_id = _log(conn, body.activity_id, q, cached, "llm", identity)
+                log_id = _log(conn, body.activity_id, resolved_q, cached, "llm", identity)
                 conn.commit()
                 yield _sse("meta", {"source": "llm", "cached": True})
                 yield _sse("delta", {"content": cached})
@@ -225,7 +234,7 @@ def ask_stream(body: AskIn, user: Optional[dict] = Depends(get_optional_user)):
             stream_meta = {"source": "llm"}
             log_id = None
             try:
-                for ev in chat_stream(q, body.activity_id, history=history, activity_context=activity_context or None, meta=stream_meta):
+                for ev in chat_stream(resolved_q, body.activity_id, history=history, activity_context=activity_context or None, meta=stream_meta):
                     if ev.get("delta"):
                         parts.append(ev["delta"])
                         yield _sse("delta", {"content": ev["delta"]})
@@ -238,7 +247,7 @@ def ask_stream(body: AskIn, user: Optional[dict] = Depends(get_optional_user)):
                 answer = "".join(parts)
                 if answer:
                     log_source = "mock" if source == "mock" else ("llm_ctx" if history else "llm")
-                    log_id = _log(conn, body.activity_id, q, answer, log_source, identity)
+                    log_id = _log(conn, body.activity_id, resolved_q, answer, log_source, identity)
                     conn.commit()
             yield _sse("done", {"source": source, "log_id": log_id, "cached": False})
         finally:
@@ -297,6 +306,9 @@ def _merge_candidates(conn, groups):
         else:
             merged[index]["count"] += group["count"]
             merged[index]["users"].update(group["users"])
+            if group["has_standalone_answer"] and not merged[index]["has_standalone_answer"]:
+                merged[index]["answer"] = group["answer"]
+                merged[index]["has_standalone_answer"] = True
     return [group for merged in merged_by_activity.values() for group in merged]
 
 
@@ -312,7 +324,7 @@ def candidates(
         scope = "AND activity_id = ?" if activity_id is not None else ""
         params = (activity_id,) if activity_id is not None else ()
         logs = conn.execute(
-            f"""SELECT question, answer, activity_id, user_id, user_role, count
+            f"""SELECT question, answer, activity_id, user_id, user_role, count, source
                 FROM qa_logs WHERE source = 'llm' {scope} ORDER BY id""",
             params,
         )
@@ -331,8 +343,13 @@ def candidates(
                 continue
             group = groups.setdefault(key, {
                 "question": row["question"], "activity_id": activity, "count": 0, "users": set(),
+                "answer": "", "has_standalone_answer": False,
             })
-            group["answer"] = row["answer"]
+            if row["source"] == "llm":
+                group["answer"] = row["answer"]
+                group["has_standalone_answer"] = True
+            elif not group["has_standalone_answer"]:
+                group["answer"] = row["answer"]
             group["count"] += row["count"] or 1
             if row["user_id"] is not None:
                 group["users"].add((row["user_role"], row["user_id"]))
@@ -342,6 +359,7 @@ def candidates(
     items = []
     for group in basics:
         group["user_count"] = len(group.pop("users"))
+        group.pop("has_standalone_answer")
         if group["user_count"] >= min_users and group["count"] >= min_count:
             items.append(group)
     items.sort(key=lambda item: (-item["user_count"], -item["count"]))

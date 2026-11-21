@@ -72,6 +72,11 @@ class ConfirmFaqReq(BaseModel):
     candidates: List[FaqCandidate] = Field(min_length=1, max_length=5)
 
 
+@app.post("/api/ai/resolve-question")
+def resolve_question(req: ChatReq):
+    return ai_gateway.resolve_question(req.question, req.history)
+
+
 class RecommendReq(BaseModel):
     user_id: int
 
