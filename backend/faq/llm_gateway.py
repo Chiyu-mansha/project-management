@@ -147,6 +147,20 @@ def faq_embedding_model() -> str:
     return response.json()["model"]
 
 
+def resolve_question(question: str, history: list) -> dict:
+    if not history:
+        return {"resolved": True, "dependent": False, "question": question}
+    if USE_REAL_LLM:
+        try:
+            result = _post("/api/ai/resolve-question", {"question": question, "history": history})
+            if (result.get("resolved") is True and type(result.get("dependent")) is bool
+                    and isinstance(result.get("question"), str) and result["question"].strip()):
+                return result
+        except (OSError, ValueError, AttributeError):
+            pass
+    return {"resolved": False}
+
+
 def confirm_faq(question: str, activity: str, history: str, candidates: list) -> int:
     try:
         result = _post("/api/ai/confirm-faq", {
