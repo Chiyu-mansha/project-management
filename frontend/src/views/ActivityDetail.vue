@@ -39,10 +39,11 @@
       @session-expired="clearSession" @form-saved="load" @registration-submitted="onRegistrationChanged" @registration-cancelled="onRegistrationChanged" />
     <div v-if="act.id && session?.role === 'student'" class="checkin-card">
       <h3>现场签到</h3>
-      <p v-if="!checkinState.registered">请先完成报名，报名通过后才能签到领取电子票。</p>
-      <p v-else-if="checkinState.checked_in">已签到，凭证状态：{{ credentialLabel(checkinState.credential?.status) }}</p>
+      <p v-if="checkinState.checked_in">已签到，凭证状态：{{ credentialLabel(checkinState.credential?.status) }}</p>
+      <p v-else-if="!activityAllowsCheckin">{{ act.status === 'cancelled' ? '活动已取消，无法签到。' : '活动当前状态不可签到。' }}</p>
+      <p v-else-if="!checkinState.registered">请先完成报名，报名通过后才能签到领取电子票。</p>
       <p v-else>你已报名该活动，可以签到并自动发放电子活动票。</p>
-      <el-button type="primary" :disabled="!checkinState.registered || checkinState.checked_in" :loading="checkinLoading" @click="doCheckin">立即签到</el-button>
+      <el-button type="primary" :disabled="!activityAllowsCheckin || !checkinState.registered || checkinState.checked_in" :loading="checkinLoading" @click="doCheckin">立即签到</el-button>
     </div>
 
     <el-dialog v-model="genDlg" title="✨ AI 生成推文" width="860px">
@@ -92,6 +93,7 @@ const request = createApiClient({
 const credentialApi = createCredentialApi(request)
 const checkinState = ref({ registered: false, checked_in: false, credential: null })
 const checkinLoading = ref(false)
+const activityAllowsCheckin = computed(() => ['published', 'ongoing'].includes(act.value.status))
 let controller
 let revision = 0
 

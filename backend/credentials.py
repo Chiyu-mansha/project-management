@@ -114,25 +114,40 @@ def checkin(
     payload: CheckInRequest,
     user: dict[str, Any] = Depends(require_role("STUDENT")),
 ):
-    activity = _activity_or_404(activity_id)
-    if not _registered_member(activity_id, user["id"]):
-        fail(403, "请先报名该活动后再签到")
+    with db.transaction() as conn:
+        # Serialize activity status changes and credential issuance.
+        conn.execute("BEGIN IMMEDIATE")
+        activity = conn.execute(
+            """
+            SELECT title, status, comprehensive_score, EXISTS (
+                SELECT 1 FROM registration_members
+                WHERE activity_id = activities.id AND user_id = ?
+            ) AS registered
+            FROM activities WHERE id = ?
+            """,
+            (user["id"], activity_id),
+        ).fetchone()
+        if activity is None:
+            fail(404, "活动不存在")
+        if activity["status"] not in ("published", "ongoing"):
+            fail(409, "活动当前状态不允许签到")
+        if not activity["registered"]:
+            fail(403, "请先报名该活动后再签到")
 
-    existing = db.query_one(
-        "SELECT * FROM credentials WHERE activity_id = ? AND user_id = ?",
-        (activity_id, user["id"]),
-    )
-    if existing:
-        return ok({"check_in": _credential_dict(dict(existing)), "replayed": True})
+        existing = conn.execute(
+            "SELECT * FROM credentials WHERE activity_id = ? AND user_id = ?",
+            (activity_id, user["id"]),
+        ).fetchone()
+        if existing:
+            return ok({"check_in": _credential_dict(dict(existing)), "replayed": True})
 
-    checked_in_at = now_iso()
-    score = activity.get("comprehensive_score")
-    credential_id = db.execute(
-        "INSERT INTO credentials (activity_id, user_id, status, checkin_time, comprehensive_score) "
-        "VALUES (?, ?, 'issued', ?, ?)",
-        (activity_id, user["id"], checked_in_at, score),
-    )
-    row = db.query_one("SELECT * FROM credentials WHERE id = ?", (credential_id,))
+        checked_in_at = now_iso()
+        credential_id = conn.execute(
+            "INSERT INTO credentials (activity_id, user_id, status, checkin_time, comprehensive_score) "
+            "VALUES (?, ?, 'issued', ?, ?)",
+            (activity_id, user["id"], checked_in_at, activity["comprehensive_score"]),
+        ).lastrowid
+        row = conn.execute("SELECT * FROM credentials WHERE id = ?", (credential_id,)).fetchone()
     return ok(
         {
             "check_in": {
@@ -143,7 +158,7 @@ def checkin(
                 "status": "SUCCESS",
                 "checkin_at": checked_in_at,
             },
-            "credential": _credential_dict(dict(row), {"title": activity.get("title")}),
+            "credential": _credential_dict(dict(row), {"title": activity["title"]}),
             "replayed": False,
         }
     )

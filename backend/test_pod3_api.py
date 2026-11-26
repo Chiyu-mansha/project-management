@@ -131,6 +131,25 @@ class Pod3MainIntegrationTest(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIn("报名", body.get("message", ""))
 
+        for activity_status in ("draft", "finished", "cancelled"):
+            with self.subTest(activity_status=activity_status):
+                self.db.execute(
+                    "UPDATE activities SET status = ? WHERE id = ?",
+                    (activity_status, self.activity_id),
+                )
+                status, rejected = self.request(
+                    "POST",
+                    f"/api/activities/{self.activity_id}/checkin",
+                    {"channel": "QR"},
+                    self.student_auth,
+                )
+                self.assertEqual(status, 409)
+                self.assertIn("不允许签到", rejected["message"])
+                self.assertIsNone(self.db.query_one(
+                    "SELECT id FROM credentials WHERE activity_id = ?", (self.activity_id,)
+                ))
+
+        self.db.execute("UPDATE activities SET status = 'published' WHERE id = ?", (self.activity_id,))
         status, issued = self.request(
             "POST",
             f"/api/activities/{self.activity_id}/checkin",
@@ -141,6 +160,7 @@ class Pod3MainIntegrationTest(unittest.TestCase):
         self.assertEqual(issued["code"], 0)
         credential_id = issued["data"]["credential"]["id"]
 
+        self.db.execute("UPDATE activities SET status = 'ongoing' WHERE id = ?", (self.activity_id,))
         status, replay = self.request(
             "POST",
             f"/api/activities/{self.activity_id}/checkin",
@@ -183,8 +203,19 @@ class Pod3MainIntegrationTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(signed["data"]["credential"]["status"], "signed")
 
+        self.db.execute("UPDATE activities SET status = 'cancelled' WHERE id = ?", (self.activity_id,))
+        status, _ = self.request(
+            "POST",
+            f"/api/activities/{self.activity_id}/checkin",
+            {"channel": "QR"},
+            self.student_auth,
+        )
+        self.assertEqual(status, 409)
+
         status, warehouse = self.request("GET", "/api/credentials", headers=self.student_auth)
         self.assertEqual(status, 200)
+        self.assertEqual(len(warehouse["data"]["items"]), 1)
+        self.assertEqual(warehouse["data"]["items"][0]["id"], credential_id)
         self.assertEqual(warehouse["data"]["items"][0]["status"], "signed")
 
 
